@@ -28,6 +28,9 @@ contract = "contract_core.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/contract_core"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/contract_core/vendor/odcs-json-schema-v3.1.0-20260505.json" = "contract_core/vendor/odcs-json-schema-v3.1.0-20260505.json"
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
