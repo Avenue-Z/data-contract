@@ -1,62 +1,84 @@
-# Avenue-Z Repo Template
+# <!-- TODO: repo-name -->
 
-A GitHub template repository that a new Avenue Z project is created from in one click plus one
-script, and that **starts life with the org's conventions already in place** — branch flow, secret
-scanning, branch protection (where the plan allows it), CODEOWNERS, dependabot, and a working CI
-pipeline for the stack you pick.
+<!-- TODO: one sentence. What is this and who is it for? -->
 
-> This page is the template's front door. A repo **created** from it starts from a clean skeleton
-> instead — `scripts/init-repo.sh` swaps this README for `README.repo.tmpl` at generation, so none
-> of this text ships into your new repo.
+## Stack
+<!-- TODO -->
 
-## Stacks
+## Setup
 
-`scripts/init-repo.sh <python|node|next>` selects one and deletes the rest:
+    git clone git@github.com:Avenue-Z/<repo>.git && cd <repo>
+    cp .env.example .env.local            # then fill it in
+    <!-- TODO: install command -->
+    pipx install pre-commit               # or: brew install pre-commit
+    pre-commit install                    # installs the gitleaks hook
 
-- **`python`** — hatchling, `src/` layout, ruff + mypy + pytest (3.11–3.13 matrix), Cloud Run Dockerfile.
-- **`node`** — a TypeScript library: vitest + eslint + `tsc --noEmit`.
-- **`next`** — Next.js App Router + TypeScript, CI that also runs `next build`, and one-command Vercel
-  linking that **cannot deploy by accident** (`scripts/link-vercel.sh`).
+Avenue Z Claude Code skills (once per machine, not per repo):
 
-## The one idea
+    /plugin marketplace add Avenue-Z/claude-marketplace
+    /plugin install setup@avenue-z
 
-Every control states plainly **what it does not do**, and **a failure to verify is never treated as
-a verified pass.** The branch guard cannot stop a direct push, and says so. Secret scanning protects
-*merge*, not *push* — a leaked key that reached the remote is burned, so rotate it. A CODEOWNERS
-entry for a team without write access is silently ignored, so the script grants write or ships no
-file at all — and CODEOWNERS **routes** reviewers, it does not **require** their approval (the
-ruleset ships `required_approving_review_count: 0`). No enforcement theater; each layer is honest
-about its own boundary. See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md).
+`setup` then auto-installs every Avenue Z plugin at **user scope**, so they work in all your repos
+and keep themselves up to date. It is deliberately NOT wired into `scripts/init-repo.sh`: plugins
+are a per-developer, per-machine concern, and init-repo runs once, for one person, on the day the
+repo is created — it would do nothing for whoever clones this next month. (`.claude/` is gitignored
+for the same reason: shared agent config lives in the marketplace, not in product repos.)
 
-## Quick start (net-new repo)
+`pre-commit` is installed standalone rather than as a project dependency so the same line works
+on both stacks. (The Python template also ships it in its `dev` extras, so
+`pip install -e ".[dev]"` gets you it for free.)
 
-1. Click **Use this template** on this repo → create a new **private** repo (it copies only the
-   default branch, `main`).
-2. Clone it, then:
+## Run
+<!-- TODO -->
 
-       git checkout -b dev
-       ./scripts/init-repo.sh <python|node|next> [--team <slug>]
+## Tests
+<!-- TODO -->
 
-   This copies the stack, strips the template's own machinery, commits once, and pushes
-   `dev`/`staging`/`main`. **Run it from `dev`** — the default branch is `main` on purpose (Vercel
-   and most tooling take *production* from the repo default), so a fresh copy lands you on `main` and
-   the script refuses to run until you branch.
-3. `./scripts/apply-rulesets.sh` — applies branch protection where the plan allows, and prints
-   exactly what it skipped.
-4. `next` stack: `vercel login`, then `./scripts/link-vercel.sh`. Nothing deploys until someone
-   enables a branch in `vercel.json` via a reviewed PR.
+## Deploy
+<!-- TODO -->
 
-**→ Full playbook, including existing repos and the org-wide path: [`docs/ADOPTION.md`](docs/ADOPTION.md).**
+## Docs
 
-## Scripts
+- `docs/superpowers/specs/` — design specs
+- `docs/superpowers/plans/` — implementation plans
+- `docs/superpowers/handoffs/` — volatile state: in-flight work, open branches, "as of" notes.
+  This is where it goes, NOT in `CLAUDE.md`.
+- `docs/notes/` — dated working notes
+- `CONTRIBUTING.md` — branch flow. **Never push directly to `main`.**
 
-- `scripts/init-repo.sh <python|node|next> [--team <slug>]` — stack select, branch lineage, CODEOWNERS.
-- `scripts/apply-rulesets.sh [--dry-run]` — branch protection for **this** repo, where the plan allows.
-- `scripts/apply-org-ruleset.sh [--dry-run]` — org-wide ruleset; deliberately hard to run (needs Team).
-- `scripts/link-vercel.sh [--dry-run]` — (`next`) link a Vercel project; never deploys.
+## Repo setup scripts (template-derived repos)
 
-## How it was designed
+- `scripts/init-repo.sh <python|node|next> [--team <slug>]` — selects the stack and creates
+  `dev`/`staging`/`main`. **Run it from `dev`:** the repo's default branch is `main`, so a fresh
+  "Use this template" copy lands you on `main` and the script refuses to run (it cuts `staging` and
+  `main` *from* `dev`). Start with:
 
-- [`template-docs/specs/`](template-docs/specs/) — the design specs, with their review logs.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — the branch flow. **Never push directly to `main`.**
-- [`SECURITY.md`](SECURITY.md) — credential handling and the merge-not-push boundary.
+      git checkout -b dev
+      ./scripts/init-repo.sh <python|node|next>
+
+  The default branch is `main` on purpose — Vercel and most tooling take the **production** branch
+  from the repository default, so a repo defaulting to `dev` would deploy every merged PR straight
+  to production. See `CONTRIBUTING.md`. **`--team` changes GitHub permissions:** if the named team exists but
+  lacks write access to this repo, the script **grants it push (write) access**
+  (`PUT orgs/Avenue-Z/teams/<slug>/repos/<owner>/<repo>`) before writing `.github/CODEOWNERS`.
+  It does this rather than merely warning, because GitHub *silently ignores* a CODEOWNERS entry
+  naming a team without write access — a warning nobody actions leaves a file that does not even
+  route a reviewer. Granting needs repo-admin or org-owner rights; if it fails, the script refuses
+  to write CODEOWNERS at all. Omit `--team` and no permissions are touched.
+  **CODEOWNERS routes reviewers; it does not require their approval** — the ruleset ships
+  `required_approving_review_count: 0`. See `SECURITY.md` before relying on it as a control.
+- `scripts/apply-rulesets.sh [--dry-run]` — applies branch protection **to this repo**, where the
+  plan allows it, and prints what it skipped. Touches nothing else.
+- `scripts/link-vercel.sh [--dry-run]` — (`next` stack) links this repo to a Vercel project.
+  **Linking is easy; deploying is a reviewed code change.** It never runs `vercel deploy`, and it
+  refuses to link unless the default branch is `main` — Vercel takes its **production** branch from
+  the repository default branch, so a repo defaulting to `dev` would deploy every merged PR straight
+  to production. `vercel.json` ships `"deploymentEnabled": false`, so a freshly linked project
+  deploys **nothing**. Turning a branch on means editing `vercel.json`, which means a PR.
+- `scripts/apply-org-ruleset.sh [--dry-run]` — applies the org ruleset to **every repository in
+  Avenue-Z**. Deliberately hard to run, and separate from the command above so that it is not one
+  flag away from it: there is **no `--yes` and no non-interactive path**, so it cannot run from CI
+  or be replayed out of shell history — you must type a challenge phrase naming the live repo
+  count. It also **refuses outright** to apply a ruleset that declares required status checks,
+  since almost no repo in the org ships those workflows and a required check that never reports
+  hangs every PR pending forever.
