@@ -1,0 +1,58 @@
+name: sca
+
+on:
+  pull_request:
+  push:
+    branches: [dev, staging, main]
+
+# Read-only: this job resolves the dependency tree and reports a check. It never writes to the repo,
+# so it must not inherit whatever the repo/org default GITHUB_TOKEN scope happens to be. Same
+# reasoning as secret-scan.yml.
+permissions:
+  contents: read
+
+# The job key MUST be literally `sca`. .github/rulesets/repo-ruleset.json requires the status-check
+# context "sca" (BAKED IN, like secret-scan, because this workflow ships into every generated repo).
+# A required check that never reports does not fail a PR — it hangs it PENDING FOREVER and nothing
+# can be merged. template-tests/test_rulesets.sh asserts this job exists and is non-matrix.
+jobs:
+  sca:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: install osv-scanner
+        run: |
+          set -euo pipefail
+          # Pinned. Dependabot cannot bump a binary downloaded inside a run, so this is a MANUAL
+          # bump — the same tradeoff secret-scan.yml makes for gitleaks.
+          OSV_VERSION="2.4.0"
+          ASSET="osv-scanner_linux_amd64"
+          BASE_URL="https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}"
+          # --fail is load-bearing: without it curl exits 0 on a 404 and writes the HTML error page
+          # under the asset name, surfacing later as a baffling exec or checksum error.
+          curl --fail -sSLo "${ASSET}" "${BASE_URL}/${ASSET}"
+          curl --fail -sSLo osv-scanner_SHA256SUMS "${BASE_URL}/osv-scanner_SHA256SUMS"
+          # The SHA256SUMS file lists every asset; --ignore-missing verifies only the one on disk
+          # (and ERRORS if it is absent, so this cannot silently verify nothing).
+          sha256sum --ignore-missing -c osv-scanner_SHA256SUMS
+          chmod +x "${ASSET}"
+          sudo mv "${ASSET}" /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      - name: scan the dependency tree and apply the policy
+        run: |
+          set -euo pipefail
+          # osv-scanner's expected exits: 0 = no vulns, 1 = vulns found, 128 = no packages to scan.
+          # 1 and 128 are NOT this gate's verdict — the tier threshold is applied by sca-gate.sh — so
+          # we allow those through. But `|| true` would also swallow a scanner ERROR (network/panic):
+          # that yields NO report, which sca-gate.sh reads as "nothing to scan" -> a green check with
+          # nothing actually scanned. That is fail-OPEN, the opposite of secret-scan's posture. So
+          # allow only the known-good codes and fail the job on anything else.
+          rc=0
+          osv-scanner scan -r --format json --output-file osv.json ./ || rc=$?
+          case "${rc}" in
+            0|1|128) ;;
+            *) echo "::error::osv-scanner exited ${rc} (not a findings/no-package code) — failed scan, refusing to report a clean check"; exit "${rc}" ;;
+          esac
+          scripts/sca-gate.sh osv.json .github/sca-policy.json

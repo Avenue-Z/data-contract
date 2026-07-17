@@ -1,0 +1,7 @@
+# TEMPLATE — not live. scripts/init-repo.sh writes .github/CODEOWNERS from this
+# only after verifying the team exists AND has write access to the repo.
+#
+# Why the ceremony: GitHub SILENTLY IGNORES a CODEOWNERS entry naming a team that
+# does not exist or lacks write access. No error, no warning. The file would look
+# like enforced review while enforcing nothing.
+*  @Avenue-Z/TEAM_SLUG

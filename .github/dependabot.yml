@@ -1,0 +1,9 @@
+# Only github-actions here: it is the one ecosystem the stack-agnostic core actually has.
+# scripts/init-repo.sh appends the pip OR npm block for the stack it selects.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly }
+    target-branch: dev
+    open-pull-requests-limit: 5

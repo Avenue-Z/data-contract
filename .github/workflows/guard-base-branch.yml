@@ -1,0 +1,39 @@
+name: guard-base-branch
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+# Read-only. This job inspects two ref names and reports a check; it has no reason to hold a
+# token that can write to the repo.
+permissions:
+  contents: read
+
+jobs:
+  guard-base-branch:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the BASE branch, not the PR's head. Otherwise the guard's decision logic
+      # (scripts/check-base-branch.sh) is supplied by the very PR it is judging: a PR from
+      # wip/x -> main that also rewrote check-base-branch.sh to `exit 0` would pass its own
+      # guard. Taking the script from the protected base means a PR cannot edit the rule it is
+      # being judged against — it can only change that rule by merging through the normal flow.
+      #
+      # This does NOT fully close the hole, and the docs must not pretend otherwise: Actions
+      # still reads THIS WORKFLOW FILE from the PR head, so a PR that rewrites
+      # guard-base-branch.yml itself can still neuter the check. That is why .github/ should be
+      # code-owned. Stated plainly in SECURITY.md and the spec's enforcement table.
+      - name: Checkout the base branch (the guard must not be supplied by the PR it guards)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.base_ref }}
+          persist-credentials: false
+
+      - name: Enforce the base-branch matrix
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          echo "PR: ${HEAD_REF} -> ${BASE_REF}"
+          scripts/check-base-branch.sh "${HEAD_REF}" "${BASE_REF}"

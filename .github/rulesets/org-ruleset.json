@@ -1,0 +1,70 @@
+{
+  "_comment": [
+    "READ THIS BEFORE ADDING A required_status_checks RULE HERE.",
+    "",
+    "This ruleset targets repository_name ~ALL — EVERY repo in the org, ~64 of them. None was",
+    "generated from this template; none has guard-base-branch.yml or secret-scan.yml. That is",
+    "exactly why it deliberately carries NO required_status_checks rule.",
+    "",
+    "A required status check that no workflow ever reports does NOT fail a PR. It hangs the PR",
+    "PENDING FOREVER — unmergeable, with no error anyone can act on. Combine that with",
+    "enforcement:active and bypass_actors:[] (nobody, not even an org owner, may bypass) and one",
+    "run of `apply-org-ruleset.sh` would take push AND merge away from every repo in the org at",
+    "once, while the script printed a success message.",
+    "",
+    "That script now REFUSES to apply this file if it declares required status checks — it does",
+    "not warn and carry on, it dies. So adding one here does not brick the org; it just makes the",
+    "org script unusable until you take it out again. Both guards exist because a warning is not",
+    "a control.",
+    "",
+    "So this ruleset ships ONLY rules that are safe on a repo with no CI at all: deletion,",
+    "non_fast_forward, and pull_request with required_approving_review_count 0. A repo with zero",
+    "workflows still works fine under those: it just cannot delete or force-push a protected",
+    "branch, and changes go through a PR.",
+    "",
+    "guard-base-branch + secret-scan ARE required — per repo, by repo-ruleset.json, which is",
+    "applied only to repos that actually ship those workflows. That is the correct scope for them.",
+    "template-tests/test_rulesets.sh asserts this file has no required_status_checks rule, so",
+    "re-adding one fails the suite instead of the org.",
+    "",
+    "(_comment is stripped by scripts/apply-org-ruleset.sh before the payload is sent to GitHub.)"
+  ],
+  "name": "avenue-z-branch-protection-org",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/main",
+        "refs/heads/staging",
+        "refs/heads/dev"
+      ],
+      "exclude": []
+    },
+    "repository_name": {
+      "include": [
+        "~ALL"
+      ],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
+      }
+    }
+  ]
+}

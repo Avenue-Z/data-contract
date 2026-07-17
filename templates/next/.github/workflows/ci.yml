@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [dev, staging, main]
+
+# This job builds and tests; it never writes to the repo. Without this block it inherits
+# whatever the repo/org default GITHUB_TOKEN scope happens to be, which is often read-write.
+permissions:
+  contents: read
+
+# The job key MUST be literally `ci`. scripts/apply-rulesets.sh requires the status-check
+# context "ci", and a required check that never reports does not fail a PR — it hangs it
+# PENDING FOREVER and nothing can be merged. template-tests/test_rulesets.sh asserts this.
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      # `build` is not redundant with `typecheck` for a Next app the way it would be for a
+      # library: a project that type-checks clean can still fail `next build` (a bad route
+      # export, a server/client boundary violation, a missing env var at build time). Vercel
+      # runs this build on every deploy, so CI must run it too — otherwise the first place a
+      # broken build surfaces is the deploy itself.
+      - run: npm run build

@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [dev, staging, main]
+
+# This job builds and tests; it never writes to the repo. Without this block it inherits
+# whatever the repo/org default GITHUB_TOKEN scope happens to be, which is often read-write.
+permissions:
+  contents: read
+
+# WHY TWO JOBS: GitHub names a matrix job's check contexts after its legs —
+# "test (3.11)", "test (3.12)", "test (3.13)". A context named plainly "test"
+# NEVER EXISTS. scripts/apply-rulesets.sh requires the single context "ci", and a
+# required check that never reports does not fail a PR — it hangs PENDING FOREVER
+# and nothing can be merged. So the matrix lives in `test`, and `ci` is a
+# non-matrix aggregate whose name is the stable context rulesets can require.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: mypy
+      - run: pytest -q
+
+  # Item 4 Part A — first-party SAST. Bandit walks the Python AST for vulnerability shapes
+  # (shell=True, yaml.load, pickle, weak crypto, ...). It is a SIBLING job; its verdict reaches the
+  # merge gate only because the `ci` job below is extended to fail on `needs.bandit.result`. A bare
+  # `needs:` would NOT gate — see scripts/ci-aggregate-gate.sh. Bandit is offline (no token/registry).
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      # Version-pinned, manual-bump: an ad-hoc `pip install` is not in a manifest, so Dependabot
+      # cannot bump it — the same tradeoff sca.yml makes for the osv-scanner binary. Resolve the
+      # current release with `pip index versions bandit` and pin it here.
+      - run: pip install "bandit==1.9.4"
+      - name: run Bandit and apply the policy
+        run: |
+          set -euo pipefail
+          # Bandit exits 1 when it finds ANY issue and 0 when clean; neither is this gate's verdict
+          # (the tier + high/high threshold is applied by bandit-gate.sh), so allow both. Any OTHER
+          # exit is a real Bandit error — refuse to report a clean check on a failed scan (fail-safe,
+          # the same posture as sca.yml).
+          rc=0
+          bandit -c pyproject.toml -r src -f json -o bandit.json || rc=$?
+          case "${rc}" in
+            0|1) ;;
+            *) echo "::error::bandit exited ${rc} (not a clean/found-issues code) — failed scan, refusing to report a clean check"; exit "${rc}" ;;
+          esac
+          scripts/bandit-gate.sh bandit.json .github/sca-policy.json
+
+  ci:
+    # `if: always()` is load-bearing. Without it this job is SKIPPED when the matrix
+    # fails, and a skipped required check never reports either — it blocks the merge
+    # just as silently as a missing one. Always run; fail loudly on a bad matrix.
+    #
+    # `needs` alone does NOT gate under `if: always()` — the verdict is hand-rolled in
+    # scripts/ci-aggregate-gate.sh, which MUST name every job whose failure should block.
+    needs: [test, bandit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Gate on the matrix and SAST results
+        run: |
+          set -euo pipefail
+          scripts/ci-aggregate-gate.sh \
+            "test:${{ needs.test.result }}" \
+            "bandit:${{ needs.bandit.result }}"

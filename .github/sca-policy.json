@@ -1,0 +1,4 @@
+{
+  "tier": "client-facing",
+  "_comment": "SCA gate tier. 'client-facing' (default) blocks CI on High/Critical dependency vulnerabilities THAT HAVE A FIX; 'internal' warns only. NEITHER tier ever blocks a finding with no available fix. This file is CODEOWNERS-guarded (mirrors vercel.json's deploymentEnabled) — loosening to 'internal' takes a reviewed PR. See SECURITY.md."
+}
