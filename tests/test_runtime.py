@@ -66,7 +66,12 @@ def test_enforce_missing_required_column_raises(tmp_path):
     with pytest.raises(ContractViolation) as ei:
         load()
     assert "position" in str(ei.value)
-    assert log.records()[-1]["result"] == "violation"
+    rec = log.records()[-1]
+    assert rec["result"] == "violation"
+    # observed_shape stays the structural shape dict on a violation (regression:
+    # the per-field dtype string must not overwrite it).
+    assert rec["observed_shape"]["columns"] == ["prompt", "sentiment", "share_of_voice"]
+    assert "dtypes" in rec["observed_shape"]
 
 
 def test_observe_never_raises_but_logs_violation(tmp_path):
