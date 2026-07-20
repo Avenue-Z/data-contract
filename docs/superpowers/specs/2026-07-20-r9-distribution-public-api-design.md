@@ -87,6 +87,10 @@ not test convenience (test convenience is served by importing the private path).
 | `FieldDiff` | class | Consumers introspect `ContractViolation.diffs` (a `list[FieldDiff]`) to build custom handling/messages. |
 | `__version__` | str | Already present. |
 
+`FieldDiff`'s four attributes — `field`, `expected`, `observed`, `problem` — are themselves part of the
+frozen surface (a consumer reads them; renaming one is a breaking change), and T5 pins them, not just
+the class's export.
+
 **Considered and rejected (kept private):** `Contract`, `Schema`, `EventLog`. A consumer using
 `load_runtime(path)` never constructs a `Contract` or a `Schema` — those are resolution internals — and
 a custom `EventLog` sink is not a real capability yet (the sink abstraction is §15 item 5, unbuilt and
@@ -118,10 +122,11 @@ def load_runtime(
     """Build a runtime from a contract file, or a disabled no-op runtime.
 
     Returns a disabled runtime — no validation, no file I/O, one loud warning at
-    construction (§3.3) — when CONTRACT_DISABLED is set in the environment OR when
-    enabled=False. "Off wins": there is no way to force validation on over the env
-    kill switch. Otherwise loads the contract and resolver and returns an enforcing
-    runtime.
+    construction (§3.3) — when CONTRACT_DISABLED is *on* in the environment OR when
+    enabled=False. CONTRACT_DISABLED is on iff present and not in
+    {"", "0", "false", "no"} (case-insensitive); so =0 / =false leave validation ON.
+    "Off wins": there is no way to force validation on over the env kill switch.
+    Otherwise loads the contract and resolver and returns an enforcing runtime.
     """
 ```
 
@@ -145,20 +150,34 @@ Two failure modes, handled distinctly:
 - `ContractRuntime.disabled()` — a classmethod returning a runtime whose `raw()`, `input()`, and
   `output()` return **pass-through no-op decorators**: the decorated function runs and returns its
   value unchanged, with **no schema resolution, no file I/O, and no per-boundary validation or events**.
-- **One loud signal at construction (closes the silent-disable gap).** Constructing a disabled runtime
-  emits exactly one `logging.warning` to **stderr**, naming the system and the trigger — e.g.
-  `contract validation DISABLED for system 'aivx-reports' (CONTRACT_DISABLED set)`. This is what makes
+- **One loud signal at construction (closes the silent-disable gap).** The warning lives in
+  **`ContractRuntime.disabled()` itself**, not in `load_runtime` — so it fires regardless of entry
+  point: a consumer calling the public `disabled()` classmethod directly gets the same signal as one
+  going through the factory. Constructing a disabled runtime emits exactly one `logging.warning` to
+  **stderr**, naming the trigger and a best-available label — e.g.
+  `contract validation DISABLED (CONTRACT_DISABLED set) [contract.yaml]`. Because a disabled runtime
+  does **no file I/O**, it cannot read the contract to learn the `system` name, so it names what it
+  actually has: `disabled(label: str | None = None)` takes an optional identifier, `load_runtime`
+  passes `str(contract_path)` as that label (it knows the path without parsing it), and a bare
+  `disabled()` call with no label reads `unspecified`. The message never depends on loading a file.
+  This is what makes
   "off" *loud* per decision #4: the diagnostic is a positive signal, not the inference-from-silence a
   reviewer would (rightly) call a foot-gun. It is deliberately a **stderr warning, not an event-log
   write** — an event write is file I/O that can itself fail, reintroducing exactly the import-time
   crash item 7 exists to prevent; stderr has no such dependency and cannot crash an unrelated import.
 - **Trigger, and precedence — "off always wins":** the runtime is disabled if `CONTRACT_DISABLED` is
-  set (any truthy value) in the environment **OR** `enabled=False` is passed. It is enabled only when
-  the env var is unset *and* `enabled` is `True` (the default). There is deliberately **no way for
-  application code to force validation on over the env kill switch** — that is what makes
-  `CONTRACT_DISABLED` a real ops kill switch (a module that hardcodes `enabled=True` still cannot
-  defeat it). A per-call opt-*out* is `enabled=False`; there is intentionally no per-call opt-*in* that
-  overrides ops.
+  **on** in the environment **OR** `enabled=False` is passed. It is enabled only when `CONTRACT_DISABLED`
+  is off *and* `enabled` is `True` (the default). There is deliberately **no way for application code to
+  force validation on over the env kill switch** — that is what makes `CONTRACT_DISABLED` a real ops
+  kill switch (a module that hardcodes `enabled=True` still cannot defeat it). A per-call opt-*out* is
+  `enabled=False`; there is intentionally no per-call opt-*in* that overrides ops.
+- **What "on" means for `CONTRACT_DISABLED` — pinned, because an ambiguous kill switch is an incident
+  risk.** It is **not** "any truthy value / merely present." The var is **on** iff it is *present and
+  its value, lowercased and stripped, is not in `{"", "0", "false", "no"}`*. So `CONTRACT_DISABLED=1`,
+  `=true`, `=yes`, `=on` all disable; `CONTRACT_DISABLED=0`, `=false`, `=no`, `=` (empty), and *unset*
+  all leave validation **enabled**. This is the direction an operator intends: typing `0`/`false` turns
+  the switch *off*, it does not accidentally disable every contract. The single rule lives in one
+  private helper (`_env_disabled()`), so the factory and any other caller share identical semantics.
 
 **(B) Library not installed at all:** `contract-core` cannot catch its own missing import, so this is
 solved by a **consumer pattern**, documented in the §5.5 authoring skill, not by library code:
@@ -221,12 +240,15 @@ construction warning above), so the system never silently ships zero validation.
 3. **T3 — public API is sufficient.** A sample consumer module runs a full raw→input→output validation
    importing **only** `from contract_core import …` — no deep module paths. If the public surface is
    insufficient for a real boundary flow, this fails.
-4. **T4 — degradation is a real toggle.** With `CONTRACT_DISABLED=1` (and, separately,
-   `load_runtime(enabled=False)`), a decorated function whose data *would* hard-fail an enforcing
-   boundary instead returns its data unchanged and performs no file I/O — **and** the construction
-   emits the single stderr warning (§3.3), asserted present. With the env var unset and `enabled` at
-   its default, the same function still hard-fails **and** emits no such warning. (A true-positive
-   *and* true-negative on both the toggle and the loud-signal — same rigor as parent spec criterion #4.)
+4. **T4 — degradation is a real toggle, with pinned activation semantics.** With `CONTRACT_DISABLED=1`
+   (and, separately, `load_runtime(enabled=False)`, and a direct `ContractRuntime.disabled()` call), a
+   decorated function whose data *would* hard-fail an enforcing boundary instead returns its data
+   unchanged and performs no file I/O — **and** the construction emits the single stderr warning
+   (§3.3), asserted present (including on the direct `disabled()` path, since that is where the warning
+   lives). Conversely, with the env var unset **and** with `CONTRACT_DISABLED=0` (the foot-gun case: an
+   operator typing `0` must *not* disable), and `enabled` at its default, the same function still
+   hard-fails **and** emits no such warning. (True-positive *and* true-negative on the toggle, the
+   `=0`/`=false` off-values, and the loud-signal — same rigor as parent spec criterion #4.)
 5. **T5 — `FieldDiff` is reachable and usable off a caught violation.** Catching a `ContractViolation`
    from an enforced boundary yields a non-empty `list[FieldDiff]` (via its `diffs`), each with the
    `field`/`expected`/`observed`/`problem` fields a consumer needs for custom handling — using **only**
