@@ -1,6 +1,6 @@
 # src/contract_core/contract.py
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel
@@ -11,10 +11,11 @@ Direction = Literal["raw", "input", "output"]
 
 class BoundarySpec(BaseModel):
     name: str
-    schema: str  # a ref: "platform.name@version"
+    # `schema` is a ref ("platform.name@version"); matches the YAML key, shadows BaseModel.schema.
+    schema: str  # type: ignore[assignment]
     mode: Mode = "enforce"
-    source: dict | None = None
-    sink: dict | None = None
+    source: dict[str, Any] | None = None
+    sink: dict[str, Any] | None = None
 
 
 class Contract(BaseModel):

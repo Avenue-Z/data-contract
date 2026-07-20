@@ -1,5 +1,5 @@
 # src/contract_core/types.py
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -22,7 +22,7 @@ PANDAS_DTYPE: dict[str, str] = {
     "datetime": "datetime64[ns]",
 }
 
-JSON_SCHEMA_TYPE: dict[str, dict] = {
+JSON_SCHEMA_TYPE: dict[str, dict[str, Any]] = {
     "string": {"type": "string"},
     "int": {"type": "integer"},
     "float": {"type": "number"},

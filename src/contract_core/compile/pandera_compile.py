@@ -8,6 +8,7 @@ from contract_core.types import PANDAS_DTYPE
 def to_pandera(schema: Schema, *, strict: bool) -> pa.DataFrameSchema:
     if schema.kind != "tabular":
         raise ValueError(f"to_pandera requires kind 'tabular', got {schema.kind!r}")
+    assert schema.fields is not None  # a tabular schema always has fields (Schema validator)
     columns = {
         f.name: pa.Column(
             PANDAS_DTYPE[f.type],

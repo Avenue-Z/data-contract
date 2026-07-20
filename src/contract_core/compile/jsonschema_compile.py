@@ -1,9 +1,11 @@
 # src/contract_core/compile/jsonschema_compile.py
+from typing import Any
+
 from contract_core.schema import Schema
 from contract_core.types import JSON_SCHEMA_TYPE
 
 
-def _field_schema(field_type: str, nullable: bool) -> dict:
+def _field_schema(field_type: str, nullable: bool) -> dict[str, Any]:
     base = dict(JSON_SCHEMA_TYPE[field_type])
     if nullable:
         t = base["type"]
@@ -11,9 +13,10 @@ def _field_schema(field_type: str, nullable: bool) -> dict:
     return base
 
 
-def to_json_schema(schema: Schema, *, open: bool) -> dict:
+def to_json_schema(schema: Schema, *, open: bool) -> dict[str, Any]:
     if schema.json_schema is not None:
         return schema.json_schema
+    assert schema.fields is not None  # non-passthrough schema always has fields (validator)
     props = {f.name: _field_schema(f.type, f.nullable) for f in schema.fields}
     required = [f.name for f in schema.fields if f.required]
     return {

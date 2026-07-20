@@ -1,6 +1,7 @@
 # src/contract_core/compile/odcs.py
 import json
 from importlib import resources
+from typing import Any
 
 import jsonschema
 
@@ -14,8 +15,8 @@ _ODCS_LOGICAL = {
 }
 
 
-def _schema_block(name: str, resolved: Schema) -> dict:
-    props = []
+def _schema_block(name: str, resolved: Schema) -> dict[str, Any]:
+    props: list[dict[str, Any]] = []
     if resolved.fields is not None:
         for f in resolved.fields:
             props.append({
@@ -26,10 +27,10 @@ def _schema_block(name: str, resolved: Schema) -> dict:
     return {"name": name, "physicalType": "table", "properties": props}
 
 
-def to_odcs(contract: Contract, resolver: Resolver) -> dict:
-    blocks = []
+def to_odcs(contract: Contract, resolver: Resolver) -> dict[str, Any]:
+    blocks: list[dict[str, Any]] = []
     for group in (contract.raw, contract.inputs, contract.outputs):
-        for b in group:  # type: BoundarySpec
+        for b in group:
             resolved = resolver.resolve(b.schema)
             blocks.append(_schema_block(b.name, resolved))
     return {
@@ -43,14 +44,15 @@ def to_odcs(contract: Contract, resolver: Resolver) -> dict:
     }
 
 
-def _load_odcs_schema() -> dict:
+def _load_odcs_schema() -> dict[str, Any]:
     text = (
         resources.files("contract_core.vendor")
         .joinpath("odcs-json-schema-v3.1.0-20260505.json")
         .read_text()
     )
-    return json.loads(text)
+    data: dict[str, Any] = json.loads(text)
+    return data
 
 
-def validate_odcs(doc: dict) -> None:
+def validate_odcs(doc: dict[str, Any]) -> None:
     jsonschema.validate(instance=doc, schema=_load_odcs_schema())

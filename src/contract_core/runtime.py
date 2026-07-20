@@ -1,6 +1,7 @@
 # src/contract_core/runtime.py
 import functools
 from collections.abc import Callable
+from typing import Any, Literal
 
 import pandas as pd
 import pandera.pandas as pa
@@ -9,9 +10,13 @@ from contract_core.compile.jsonschema_compile import to_json_schema
 from contract_core.compile.pandera_compile import to_pandera
 from contract_core.contract import BoundarySpec, Contract
 from contract_core.errors import ContractViolation, FieldDiff
-from contract_core.events import EventLog
+from contract_core.events import EventLog, Result
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
+
+# A boundary decorator: wraps a data-producing function, validating its return value.
+Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
+Problem = Literal["missing", "retyped", "extra"]
 
 
 def _default_clock() -> str:
@@ -38,23 +43,23 @@ class ContractRuntime:
                 return b
         raise KeyError(f"no {direction} boundary named {name!r} in contract")
 
-    def raw(self, name: str):
+    def raw(self, name: str) -> Decorator:
         return self._decorator("raw", name)
 
-    def input(self, name: str):
+    def input(self, name: str) -> Decorator:
         return self._decorator("input", name)
 
-    def output(self, name: str):
+    def output(self, name: str) -> Decorator:
         return self._decorator("output", name)
 
-    def _decorator(self, direction: str, name: str):
+    def _decorator(self, direction: str, name: str) -> Decorator:
         spec = self._spec(direction, name)
         resolved = self.resolver.resolve(spec.schema)
         ContractRuntime.REGISTRY.append((direction, name))
 
-        def deco(fn):
+        def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
             @functools.wraps(fn)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
                 data = fn(*args, **kwargs)
                 self._validate(direction, spec, resolved, data)
                 return data
@@ -63,7 +68,8 @@ class ContractRuntime:
 
     # ---- validation ----
 
-    def _validate(self, direction: str, spec: BoundarySpec, resolved: Schema, data) -> None:
+    def _validate(self, direction: str, spec: BoundarySpec, resolved: Schema,
+                  data: Any) -> None:
         is_output = direction == "output"
         if resolved.kind == "tabular":
             diffs, observed = self._validate_tabular(resolved, data, is_output)
@@ -73,6 +79,7 @@ class ContractRuntime:
         hard = [d for d in diffs if d.problem in ("missing", "retyped")]
         extra = [d for d in diffs if d.problem == "extra"]
 
+        result: Result
         if hard:
             result = "violation"
         elif extra and is_output:
@@ -90,9 +97,11 @@ class ContractRuntime:
             raise ContractViolation(boundary=spec.name, schema_ref=resolved.ref,
                                     direction=direction, diffs=hard)
 
-    def _validate_tabular(self, resolved: Schema, df: pd.DataFrame, is_output: bool):
-        observed = {"columns": list(df.columns),
-                    "dtypes": {c: str(t) for c, t in df.dtypes.items()}}
+    def _validate_tabular(self, resolved: Schema, df: pd.DataFrame,
+                          is_output: bool) -> tuple[list[FieldDiff], dict[str, Any]]:
+        assert resolved.fields is not None  # tabular schema always has fields
+        observed: dict[str, Any] = {"columns": list(df.columns),
+                                    "dtypes": {c: str(t) for c, t in df.dtypes.items()}}
         diffs: list[FieldDiff] = []
         ps = to_pandera(resolved, strict=False)
         try:
@@ -100,11 +109,12 @@ class ContractRuntime:
         except pa.errors.SchemaErrors as err:
             for _, row in err.failure_cases.iterrows():
                 check = str(row.get("check", ""))
+                problem: Problem
                 if check == "column_in_dataframe":
                     # missing required column: name is in `failure_case`, not `column`.
                     field = str(row.get("failure_case"))
                     problem = "missing"
-                    observed = "absent"
+                    field_observed = "absent"
                 else:
                     # a dtype/value check on a present column: name is in `column`.
                     col = row.get("column")
@@ -112,13 +122,13 @@ class ContractRuntime:
                         continue
                     field = str(col)
                     problem = "retyped"
-                    observed = str(df.dtypes.get(field, "absent"))
+                    field_observed = str(df.dtypes.get(field, "absent"))
                 declared = next((f for f in resolved.fields if f.name == field), None)
                 expected = declared.type if declared else "?"
                 diffs.append(FieldDiff(field=field, expected=str(expected),
-                                       observed=observed, problem=problem))
+                                       observed=field_observed, problem=problem))
         # de-dup by field
-        seen = {}
+        seen: dict[str, FieldDiff] = {}
         for d in diffs:
             seen[d.field] = d
         diffs = list(seen.values())
@@ -130,9 +140,10 @@ class ContractRuntime:
                                            observed=str(df.dtypes[c]), problem="extra"))
         return diffs, observed
 
-    def _validate_payload(self, resolved: Schema, payload: dict, is_output: bool):
+    def _validate_payload(self, resolved: Schema, payload: dict[str, Any],
+                          is_output: bool) -> tuple[list[FieldDiff], dict[str, Any]]:
         import jsonschema
-        observed = {"keys": list(payload.keys())}
+        observed: dict[str, Any] = {"keys": list(payload.keys())}
         js = to_json_schema(resolved, open=not is_output)
         diffs: list[FieldDiff] = []
         validator = jsonschema.Draft202012Validator(js)
@@ -149,7 +160,7 @@ class ContractRuntime:
             elif err.validator == "additionalProperties" and is_output:
                 # closed output: name the extras
                 declared = set((resolved.json_schema or {}).get("properties", {})) \
-                    if resolved.json_schema else {f.name for f in resolved.fields}
+                    if resolved.json_schema else {f.name for f in (resolved.fields or [])}
                 for k in payload:
                     if k not in declared:
                         diffs.append(FieldDiff(field=str(k), expected="absent",

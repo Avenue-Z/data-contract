@@ -2,7 +2,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 Result = Literal["pass", "warn", "violation"]
 
@@ -14,7 +14,7 @@ class EventLog:
         self.path = Path(path)
 
     def emit(self, *, system: str, boundary: str, schema: str, version: str,
-             result: Result, observed_shape: dict, timestamp: str) -> None:
+             result: Result, observed_shape: dict[str, Any], timestamp: str) -> None:
         record = {
             "system": system, "boundary": boundary, "schema": schema,
             "version": version, "result": result,
@@ -24,7 +24,7 @@ class EventLog:
         with self.path.open("a") as fh:
             fh.write(json.dumps(record) + "\n")
 
-    def records(self) -> list[dict]:
+    def records(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
             return []
         return [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]

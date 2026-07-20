@@ -1,6 +1,6 @@
 # src/contract_core/schema.py
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, model_validator
@@ -9,11 +9,12 @@ from contract_core.types import Field
 
 
 class Schema(BaseModel):
-    schema: str
+    # `schema` intentionally matches the YAML key; it shadows BaseModel.schema (deprecated).
+    schema: str  # type: ignore[assignment]
     version: str
     kind: Literal["tabular", "payload"]
     fields: list[Field] | None = None
-    json_schema: dict | None = None
+    json_schema: dict[str, Any] | None = None
 
     @property
     def ref(self) -> str:
