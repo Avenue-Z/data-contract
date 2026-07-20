@@ -442,3 +442,68 @@ Named so they don't evaporate. Each has an owner-phase; none is hand-waved.
 | R5 | **Version GC deletes a live low-frequency dependency.** Annual/ad-hoc jobs have no cron cadence to bound a runtime-only grace window. | Maintenance tooling | Deferred | Static evidence (lockfile refs across all repos) is **primary** and alone keeps a version live; runtime event log is a supplement marking hot/cold; delete only when unreferenced *and* cold past a grace window (§9). |
 | R6 | **JS validates a weaker form than Python.** Per the Portable Core principle (decision #1), the shared compiled JSON Schema carries only the structural core; Pandera value/cross-column/custom checks are Python-only, so JS accepts payloads Python would reject for the same named schema. | Cross-language validation of tabular schemas | Phase 3 (JS SDK) | `compat` also reasons only over the core, so compatibility is uncorrupted (§6, decision #1); checks that must hold in *both* languages are authored in the structural core, not as Pandera-only checks; document the weaker-form guarantee at the JS SDK boundary. |
 | R7 | **Authoring skill underperforms silently.** The skill (§5.5) is what makes Phase 1's "new automations get contracts by default" true, but unlike the runtime it has no replay test — its failure is silent (people just don't write contracts) and uncaught. | Phase 1 adoption promise | Phase 1 | Dogfood on the next **N≥5** new automations; measure contract-adoption rate *without nagging* (adoption that needs a human reminder means the skill failed). **Threshold: <80% adopting a contract unprompted = skill defect**, revisit the skill — not a discipline problem. (Numbers are a starting placeholder so the risk can actually trip; tune once there's data.) |
+| R8 | **Physical-dtype brittleness in tabular validation.** `to_pandera` compiles our logical `type` to one pandas dtype and validates with `coerce=False`, so a boundary hard-fails whenever pandas *infers* a different *physical* dtype for semantically-fine data: `int64` where the schema declared `float`/`Int64` (a client CSV with no null/decimal positions), `object` vs `str` across pandas 2↔3, or an all-null column arriving as `object`. Surfaced live in the Phase 0 pilot (pandas 3.0); it passed only because four verticals happened to infer identical dtypes. A drift-detector that false-positives on valid data is one people disable — worse than none. | Runtime tabular validation, **every consuming repo** | **Phase 1** (before `enforce` spreads past the pilot) | Match on **logical type families** (numeric / string / temporal / boolean) rather than one physical dtype, *or* run a non-mutating **convertibility** check (does the column read as the declared type without loss?) instead of exact-dtype equality — while still rejecting a genuine type change (criterion #1). `coerce=True` is not the fix: it would hide the very drift criterion #1 exists to catch. Decide before the type vocabulary hardens across repos. |
+| R9 | **Distribution & public API surface.** `contract-core` installs only as an editable local path at `0.0.1`, exports just `__version__`, and consumers import deep module paths (`contract_core.runtime`, `.contract`, `.errors`, `.resolver`). CI on another machine cannot install it, and any internal refactor breaks every consuming repo at once. Invisible from the pilot alone; a hard blocker for "first thing in every new repo." | Adoption / topology (§10) | **Phase 1** (prerequisite to repo #2) | Publish a versioned artifact (private index or pinned git-tag ref); curate a stable public API in `__init__.py` (`ContractRuntime`, `Contract`, `Schema`, `ContractViolation`, …) and treat deep module paths as private. |
+| R10 | **The authored format is itself unversioned.** The schema/contract YAML is the real API surface but carries no format-version; a `contract-core` format change breaks every repo's authored files with no migration — the system has a compatibility story for *data* (§9) but none for *its own artifacts*. | Format evolution across repos | **Phase 1/2** | Add an explicit format `apiVersion` to the schema and contract formats before broad adoption; define a format-compat policy (loudly reject/migrate an unknown format version, never silently mis-parse). |
+
+## 15. Post-Phase-0 findings (2026-07-20)
+
+Phase 0 shipped `contract-core` (plan Tasks 1–12) and the `aivx-reports` pilot (plan Tasks 13–16,
+on a feature branch): both PEEC boundaries authored from the *real* export columns (not the plan's
+placeholders), `observe`→`enforce`, criteria #1/#2 passing as literal tests, and the R2 drift-test
+convention realized. Recorded here so the findings steer later phases instead of re-surfacing per repo.
+The through-line: **most of the value is in `contract-core` as a reusable library, so most of the fixes
+belong in this repo, not in any one pilot.**
+
+**Validated by the pilot**
+- The two-boundary model (§7, decision #4) works end-to-end on a real file-ingest + mapper pipeline;
+  blame localizes (raw = did the vendor change, normalized = did our mapper drift).
+- Criteria #1 (type change) and #2 (field removal) hard-fail at the boundary naming the field and the
+  schema version (§12) — against a real adapter, not just fixtures.
+- The R2 mitigation (§14) is concrete: a companion drift-test now exists, giving Phase 1's `reconcile`
+  gate a real pattern to enforce rather than a described one.
+
+**New — fix in `data-contract` (the library); every new repo inherits these**
+1. **Physical-dtype brittleness → R8.** The single most important correctness finding. The pilot's
+   green run was partly luck of inference.
+2. **Distribution + no stable public API → R9.** Editable-local-path install and deep imports are an
+   adoption blocker, invisible from inside the pilot.
+3. **The authored format is unversioned → R10.**
+4. **No value-check enrichment hook yet.** Decision #1 (Portable Core) promises value/cross-field
+   checks as a Python-side Pandera *enrichment*, but `to_pandera` emits only presence/type/nullability
+   and the runtime applies exactly that — an author currently has **no way to attach** the enrichment
+   the principle assumes. So the structural-core split is honored, but its other half is unbuilt. For
+   this pilot that means the likely real corruption (sentiment out of range, `is_owned ∉ {0,1}`,
+   negative ranks, empty `brand`) passes silently. *Owned: Phase 1 — design the enrichment attach-point
+   alongside the runtime.*
+5. **Library-hygiene defects to clear alongside the above:** `ContractRuntime.REGISTRY` is
+   process-global mutable class state (leaks across contracts/tests — the pilot's registry assertion is
+   already order-dependent); an empty (0-row) result frame is reported as "all columns missing" instead
+   of "structurally valid, no rows", so a gracefully-handled empty case becomes a confusing
+   `ContractViolation`; runtime error-classification parses library internals (`check ==
+   "column_in_dataframe"`, `jsonschema` message-splitting) and is fragile across the pinned-dependency
+   bumps; the `schema` field shadows `BaseModel.schema` (a `UserWarning` every run — use a Pydantic
+   alias); the event log (§4.4) is a hardcoded local JSONL with no sink abstraction and, in `observe`,
+   no reader — its whole value assumes someone reviews it.
+
+**New — pilot/usage guidance (fix in the consuming repo + the §5.5 skill, not the library)**
+6. **Decorate the true raw read, not a post-cleaning function.** The pilot decorated `load_prompts`,
+   which strips/filters *before* returning, so it validates a partly-cleaned frame — weakening the
+   "raw = vendor edge" guarantee of §7. The authoring skill should steer decoration to the pre-cleaning
+   read (`pd.read_csv` output).
+7. **Don't make import-time runtime construction the default.** The pilot builds the runtime at module
+   import (file I/O + a hard `contract-core` dependency at import time), so anything importing the
+   module hard-crashes without the library present. The library should offer a lazy / opt-in /
+   `disabled()` path (ties to R9), and the skill should document it — the contract should degrade to a
+   warning, not break an unrelated import.
+8. **Direction modeling.** A produced-internally frame declared under `inputs:` inherits *open*
+   (extra-field-silent) strictness (§5.2), so a forgotten schema update on a new output column is
+   silent. If catching the producer's own drift is the goal, model it under `outputs:` (warn-on-extra).
+   A clarification for the skill, not a code change.
+
+**Gate answer (§13 — "was the onboarding loop pleasant?"):** Yes. Schemas authored from the real
+columns matched on the first try across four verticals (digital-banks, payments, beauty, alts); no
+reconciliation was needed. All friction lived in items 1–8, none of which blocked the pilot but all of
+which **compound across repos**. Recommendation: clear **R8, R9, and item 4** before onboarding repo #2
+— they are the difference between "drop it in and it helps" and "drop it in and it cries wolf / can't
+install / silently misses the real bugs."
