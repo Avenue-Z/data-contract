@@ -74,6 +74,39 @@ def test_enforce_missing_required_column_raises(tmp_path):
     assert "dtypes" in rec["observed_shape"]
 
 
+def test_enforce_type_change_raises_retyped_naming_field(tmp_path):
+    # R8 regression: family-based dtype validation must still hard-fail a genuine
+    # type change, surfacing it as a `retyped` diff naming the field and its dtype.
+    rt, log = _runtime(tmp_path)
+
+    @rt.input("prompts")
+    def load():
+        df = _good_df()
+        df["position"] = df["position"].astype(str)  # vendor sends strings, not ints
+        return df
+
+    with pytest.raises(ContractViolation) as ei:
+        load()
+    assert "position" in str(ei.value)
+    assert "retyped" in str(ei.value)
+    assert "expected int" in str(ei.value)
+    assert log.records()[-1]["result"] == "violation"
+
+
+def test_enforce_inferred_equivalent_dtype_passes(tmp_path):
+    # R8 core: a plain int64 for a declared int (Int64) is not drift — must pass.
+    rt, log = _runtime(tmp_path)
+
+    @rt.input("prompts")
+    def load():
+        df = _good_df()
+        df["position"] = df["position"].astype("int64")  # plain int64, not Int64
+        return df
+
+    load()  # must not raise
+    assert log.records()[-1]["result"] == "pass"
+
+
 def test_observe_never_raises_but_logs_violation(tmp_path):
     rt, log = _runtime(tmp_path, mode="observe")
 
