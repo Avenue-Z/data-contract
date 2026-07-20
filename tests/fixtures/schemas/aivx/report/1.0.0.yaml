@@ -1,0 +1,12 @@
+# tests/fixtures/schemas/aivx/report/1.0.0.yaml
+schema: aivx.report
+version: 1.0.0
+kind: payload
+fields:
+  - name: slug
+    type: string
+    required: true
+  - name: score
+    type: float
+    required: true
+    nullable: true

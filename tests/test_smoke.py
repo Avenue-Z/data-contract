@@ -1,5 +1,7 @@
-from app.main import greet
+# tests/test_smoke.py
+import contract_core
 
 
-def test_greet_returns_a_greeting():
-    assert greet("world") == "hello, world"
+def test_package_imports_and_has_version():
+    assert isinstance(contract_core.__version__, str)
+    assert contract_core.__version__ != ""

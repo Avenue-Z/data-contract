@@ -8,6 +8,10 @@
 
 **Tech Stack:** Python 3.13, Pydantic v2 (our own models + payload validation), Pandera (tabular validation), `jsonschema` (payload + ODCS-document validation), PyYAML, `click` (CLI), `pytest`.
 
+**Repo state (READ FIRST — the repo is NOT blank):** `data-contract` was initialized from `Avenue-Z/repo-template`. It already contains a placeholder `app` package (`src/app/main.py` with `greet()`), a smoke test for it (`tests/test_smoke.py`), `tests/conftest.py`, and a real `pyproject.toml` carrying the template's tooling — `ruff`, `mypy` (`strict = true`), `bandit`, and pytest `addopts = "--strict-config --strict-markers"` — plus dev deps including `pre-commit` (the gitleaks secret-scan hook). **Task 1 therefore MERGES `contract_core` into this scaffold — it does not overwrite.** Keep the tooling config; retarget it from `app` to `contract_core`; delete the `app` placeholder. `.gitignore` already lists `.venv/`, `__pycache__/`, `*.egg-info/`, `.pytest_cache/`, `dist/` — no new entries needed except the runtime event-log artifact.
+
+**Execution scope for this pass:** Tasks 1–12 (the `contract_core` library, entirely within this repo). Tasks 13–16 (the `aivx-reports` pilot) are deferred to a later, deliberate pass and are left in this document unchanged as future work — do NOT execute them now.
+
 ## Global Constraints
 
 Copied verbatim from the spec (`docs/superpowers/specs/2026-07-16-data-contract-system-design.md`); every task inherits these.
@@ -47,19 +51,25 @@ Copied verbatim from the spec (`docs/superpowers/specs/2026-07-16-data-contract-
 
 ---
 
-### Task 1: Package scaffold
+### Task 1: Reframe the template scaffold as the `contract_core` package
+
+The repo already has the `Avenue-Z/repo-template` scaffold (see **Repo state** above). This task **merges** `contract_core` into it: retarget `pyproject.toml` (keeping ruff/mypy/bandit/pytest-strict config), create the new package, delete the `app` placeholder, and swap the smoke test. It does **not** create a fresh `pyproject.toml` or `.gitignore` from scratch.
 
 **Files:**
-- Create: `pyproject.toml`
+- Modify: `pyproject.toml` (rename project `app` → `contract-core`; add runtime deps + `contract` script; retarget wheel/mypy from `src/app` → `src/contract_core`; keep all tooling)
 - Create: `src/contract_core/__init__.py`
-- Create: `tests/test_smoke.py`
-- Create: `.gitignore` (already exists — extend)
+- Modify: `tests/test_smoke.py` (replace the `greet` smoke test with the `contract_core` import test)
+- Delete: `src/app/__init__.py`, `src/app/main.py` (placeholder demo — no longer referenced once the smoke test is swapped)
+- Modify: `.gitignore` (append the one runtime artifact; the rest already exist)
+- Keep unchanged: `tests/conftest.py`
 
 **Interfaces:**
 - Consumes: nothing.
 - Produces: an installed, importable `contract_core` package (`import contract_core; contract_core.__version__`).
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Replace the smoke test with the failing `contract_core` test**
+
+Overwrite `tests/test_smoke.py` (it currently imports `app.main.greet`) with:
 
 ```python
 # tests/test_smoke.py
@@ -76,7 +86,9 @@ def test_package_imports_and_has_version():
 Run: `python -m pytest tests/test_smoke.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'contract_core'`.
 
-- [ ] **Step 3: Write `pyproject.toml`**
+- [ ] **Step 3: Retarget `pyproject.toml` (merge — do NOT replace the whole file)**
+
+Apply these edits to the existing file, leaving `[tool.ruff]`, `[tool.ruff.lint]`, and `[tool.bandit]` untouched. The result should read:
 
 ```toml
 [build-system]
@@ -86,6 +98,7 @@ build-backend = "hatchling.build"
 [project]
 name = "contract-core"
 version = "0.0.1"
+description = "Data contract core library — schemas, contracts, compilers, runtime validation."
 requires-python = ">=3.13"
 dependencies = [
     "pydantic~=2.13",
@@ -97,7 +110,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# pre-commit stays: it installs the gitleaks hook (the one local secret-scan control).
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8"]
 
 [project.scripts]
 contract = "contract_core.cli:main"
@@ -107,7 +121,26 @@ packages = ["src/contract_core"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
 ```
+
+Concretely, the diff from the template is: `name` `app`→`contract-core`; add `version`/`description`/`requires-python`/`dependencies`; add `[project.scripts]`; wheel `packages` `src/app`→`src/contract_core`; `ruff`/`mypy` versions `py311`/`3.11`→`py313`/`3.13`. (`[project.scripts]` points at `contract_core.cli:main`, created in Task 12 — declaring it now is fine; install does not import it.)
 
 - [ ] **Step 4: Write the package init**
 
@@ -116,22 +149,24 @@ pythonpath = ["src"]
 __version__ = "0.0.1"
 ```
 
-- [ ] **Step 5: Create/extend `.gitignore`**
+- [ ] **Step 5: Delete the `app` placeholder**
 
-Ensure it contains:
+Run:
+```bash
+git rm src/app/__init__.py src/app/main.py
+```
+Nothing references `app` after Step 1 swapped the smoke test. (`mypy files = ["src"]` now sees only `src/contract_core`.)
+
+- [ ] **Step 6: Append the runtime artifact to `.gitignore`**
+
+The event log (Task 10) defaults to `./contract-events.jsonl` on manual runs. Append under the Python section:
 
 ```
-__pycache__/
-*.pyc
-.venv/
-node_modules/
-.DS_Store
-*.egg-info/
-.pytest_cache/
-dist/
+contract-events.jsonl
 ```
+Everything else the package needs (`.venv/`, `__pycache__/`, `*.egg-info/`, `.pytest_cache/`, `dist/`) is already present — do not duplicate it.
 
-- [ ] **Step 6: Set up the environment and install**
+- [ ] **Step 7: Set up the environment and install**
 
 Run:
 ```bash
@@ -140,16 +175,16 @@ python3 -m venv .venv
 ```
 Expected: installs cleanly, `Successfully installed contract-core-0.0.1 ...`.
 
-- [ ] **Step 7: Run test to verify it passes**
+- [ ] **Step 8: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_smoke.py -v`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add pyproject.toml src/contract_core/__init__.py tests/test_smoke.py .gitignore
-git commit -m "feat: scaffold contract_core package"
+git add pyproject.toml src/contract_core/__init__.py tests/test_smoke.py .gitignore src/app
+git commit -m "feat: reframe template scaffold as contract_core package"
 ```
 
 ---
