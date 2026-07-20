@@ -2107,3 +2107,43 @@ git commit -m "test(contracts): R2 adapter drift-test + convention doc"
 ## Deferred to later phases (do NOT build in Phase 0)
 
 `reconcile` + the R2 gate enforcement (Phase 1) · the authoring skill (Phase 1) · `compat` + Karapace + semver-bump CI + success criteria #4/#5 (Phase 2) · JS validate-only SDK (Phase 3) · version GC · the canary · `datacontract-cli` runtime integration.
+
+---
+
+## Phase 0 Retrospective (executed 2026-07-17 → 2026-07-20)
+
+**Status: complete.** Tasks 1–12 built in this repo (33 tests; ruff + mypy `--strict` + bandit green;
+merged to local `dev`). Tasks 13–16 executed as a real pilot in `aivx-reports` on branch
+`feat/data-contract-pilot` (off `origin/main`; `main` untouched, nothing pushed). Every Definition-of-Done
+item is met: `contract lint` resolves the pilot contract and validates its ODCS output; both boundaries
+are decorated and log each crossing with an observed shape; criteria #1/#2 pass as literal tests against
+the pilot; both boundaries are in `enforce`, re-verified not to break on good data; the R2 drift-test
+convention exists with a passing example.
+
+**Deviations from the plan, and why**
+- **Scope split.** Tasks 1–12 ran first as a deliberate `contract_core`-only pass; Tasks 13–16 followed
+  in a separate session against the live `aivx-reports` repo. (The plan's "execution scope" note already
+  anticipated this.)
+- **CI-green work beyond the plan.** The plan verified per-task with `pytest` only, but `ci.yml` also
+  gates on `ruff` and `mypy --strict` across a Python matrix. Making the branch mergeable required:
+  dict type-args + annotations + `fields`-not-None guards across the package; a targeted `# type: ignore`
+  for the intentional `schema` field shadow; `pandas-stubs`/`types-jsonschema`/`types-PyYAML` dev deps;
+  and narrowing the CI matrix to `3.13` (pyproject `requires-python >=3.13` could not install on 3.11/3.12).
+- **A real bug, caught by mypy `--strict`, not by the plan's tests.** `_validate_tabular` reused the name
+  `observed` for a per-field dtype string, overwriting the observed-shape dict that is returned and
+  written to the event log on a violation. Untested by the plan (no case asserted the shape on a
+  violation), so `pytest` was green while the log was wrong. Fixed; a regression test now asserts the
+  shape dict survives a violation. *Lesson for later phases: assert `observed_shape` contents on the
+  failure paths, not just `result`.*
+- **Pilot schemas authored from reality.** The plan's Task 13/15 placeholder columns did not match the
+  real `peec_prompts.csv` (22 cols) or `peec_mapped.csv` (10 cols: `prompt_id, prompt_text,
+  topic_cluster, platform, brand, cited_url, media_type, is_owned, citation_rank, sentiment`). Schemas
+  were authored from the real columns/dtypes, as the plan instructed ("use the real ones").
+
+**Findings → recorded in the spec, not here.** The design-level findings this pass surfaced (physical-dtype
+brittleness, distribution/public-API, unversioned authored format, the missing value-check enrichment hook,
+and library-hygiene defects), plus the pilot/usage guidance (decorate the true raw read; avoid import-time
+runtime construction; direction modeling), are captured in **design spec §15** and as new risks **R8–R10 in
+§14**. That is the durable record; the one-line summary for planners is: *the loop works and onboarding was
+pleasant, but clear R8 (dtype false-positives), R9 (packaging + public API), and the enrichment hook before
+onboarding a second repo* — otherwise the friction compounds per repo.
