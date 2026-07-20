@@ -20,7 +20,7 @@ dependencies = [
 # pre-commit is here because README's Setup step runs `pre-commit install` — the step that
 # installs the gitleaks hook, i.e. the one local security control. Without it in dev, a new
 # engineer following Setup verbatim gets `command not found` on exactly that line.
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8",
+dev = ["pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8",
        "pandas-stubs", "types-jsonschema", "types-PyYAML"]
 
 [project.scripts]
