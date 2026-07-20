@@ -20,6 +20,14 @@ def test_major_pin_resolves_to_newest_matching():
     assert s.version == "1.1.0"  # newest with major 1
 
 
+def test_major_pin_skips_non_semver_stem():
+    # a stray `latest.yaml` in the schema dir must be skipped, not crash
+    # major-pin resolution on int("latest").
+    r = Resolver([FIX])
+    s = r.resolve("peec.prompts_export@1")
+    assert s.version == "1.1.0"
+
+
 def test_missing_schema_raises():
     r = Resolver([FIX])
     with pytest.raises(SchemaNotFound):

@@ -27,7 +27,12 @@ def dtype_satisfies(field_type: str, series: pd.Series) -> bool:
         return True
 
     if field_type == "string":
-        return pdt.is_string_dtype(series) or pdt.is_object_dtype(series)
+        if pdt.is_object_dtype(series):
+            # object dtype carries no content guarantee (a column of ints/dicts
+            # is still `object`); inspect elements the way the numeric branches
+            # do, so a genuine non-string drift declared `string` is rejected.
+            return bool(non_null.map(lambda x: isinstance(x, str)).all())
+        return bool(pdt.is_string_dtype(series))
     if field_type == "bool":
         return bool(pdt.is_bool_dtype(series))
     if field_type in ("date", "datetime"):

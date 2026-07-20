@@ -8,7 +8,7 @@ class FieldDiff(BaseModel):
     field: str
     expected: str
     observed: str
-    problem: Literal["missing", "retyped", "extra"]
+    problem: Literal["missing", "retyped", "nullable", "extra"]
 
 
 class ContractViolation(Exception):

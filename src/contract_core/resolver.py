@@ -8,8 +8,16 @@ class SchemaNotFound(KeyError):
     pass
 
 
-def _parse_semver(v: str) -> tuple[int, int, int]:
-    parts = [int(p) for p in v.split(".")]
+def _parse_semver(v: str) -> tuple[int, int, int] | None:
+    """Parse a semver stem, or return None for a non-versioned filename.
+
+    Returning None (rather than raising) lets the major-pin glob skip stray
+    files like `latest.yaml` or `_template.yaml` instead of crashing on them.
+    """
+    try:
+        parts = [int(p) for p in v.split(".")]
+    except ValueError:
+        return None
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts[:3])  # type: ignore[return-value]
@@ -33,11 +41,8 @@ class Resolver:
                     return Schema.from_yaml(path)
             else:
                 major = int(version)
-                candidates = [
-                    (p, _parse_semver(p.stem))
-                    for p in schema_dir.glob("*.yaml")
-                    if _parse_semver(p.stem)[0] == major
-                ]
+                parsed = ((p, _parse_semver(p.stem)) for p in schema_dir.glob("*.yaml"))
+                candidates = [(p, v) for p, v in parsed if v is not None and v[0] == major]
                 if candidates:
                     best = max(candidates, key=lambda c: c[1])[0]
                     return Schema.from_yaml(best)

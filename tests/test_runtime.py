@@ -107,6 +107,26 @@ def test_enforce_inferred_equivalent_dtype_passes(tmp_path):
     assert log.records()[-1]["result"] == "pass"
 
 
+def test_enforce_null_in_non_nullable_column_labeled_nullable_not_retyped(tmp_path):
+    # A null in a non-nullable column (`prompt`) is a null-tolerance violation,
+    # not a type change: it must surface as `nullable`, not a mislabeled `retyped`
+    # with the (valid) dtype as observed.
+    rt, log = _runtime(tmp_path)
+
+    @rt.input("prompts")
+    def load():
+        df = _good_df()
+        df["prompt"] = [None]  # non-nullable field, now all-null
+        return df
+
+    with pytest.raises(ContractViolation) as ei:
+        load()
+    msg = str(ei.value)
+    assert "nullable field 'prompt'" in msg
+    assert "retyped field 'prompt'" not in msg
+    assert log.records()[-1]["result"] == "violation"
+
+
 def test_observe_never_raises_but_logs_violation(tmp_path):
     rt, log = _runtime(tmp_path, mode="observe")
 

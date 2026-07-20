@@ -16,7 +16,7 @@ from contract_core.schema import Schema
 
 # A boundary decorator: wraps a data-producing function, validating its return value.
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
-Problem = Literal["missing", "retyped", "extra"]
+Problem = Literal["missing", "retyped", "nullable", "extra"]
 
 
 def _default_clock() -> str:
@@ -76,7 +76,7 @@ class ContractRuntime:
         else:
             diffs, observed = self._validate_payload(resolved, data, is_output)
 
-        hard = [d for d in diffs if d.problem in ("missing", "retyped")]
+        hard = [d for d in diffs if d.problem in ("missing", "retyped", "nullable")]
         extra = [d for d in diffs if d.problem == "extra"]
 
         result: Result
@@ -121,8 +121,14 @@ class ContractRuntime:
                     if col is None or (isinstance(col, float) and pd.isna(col)):
                         continue
                     field = str(col)
-                    problem = "retyped"
-                    field_observed = str(df.dtypes.get(field, "absent"))
+                    if check == "not_nullable":
+                        # a null-tolerance violation, not a type change: don't
+                        # mislabel it `retyped` with a (valid) dtype as observed.
+                        problem = "nullable"
+                        field_observed = "null"
+                    else:
+                        problem = "retyped"
+                        field_observed = str(df.dtypes.get(field, "absent"))
                 declared = next((f for f in resolved.fields if f.name == field), None)
                 expected = declared.type if declared else "?"
                 diffs.append(FieldDiff(field=field, expected=str(expected),

@@ -58,6 +58,20 @@ def test_numeric_does_not_satisfy_string():
     assert not dtype_satisfies("string", pd.Series([1, 2], dtype="int64"))
 
 
+def test_object_column_of_ints_does_not_satisfy_string():
+    # object dtype is not a content guarantee (post-concat/apply drift); a column
+    # declared `string` that actually holds ints must fail, not pass on dtype alone.
+    assert not dtype_satisfies("string", pd.Series([1, 2, 3], dtype=object))
+
+
+def test_object_column_of_non_str_objects_does_not_satisfy_string():
+    assert not dtype_satisfies("string", pd.Series([{"a": 1}], dtype=object))
+
+
+def test_object_column_of_mixed_str_and_int_does_not_satisfy_string():
+    assert not dtype_satisfies("string", pd.Series(["a", 2], dtype=object))
+
+
 # ---- bool is its own family (not numeric) ----
 
 def test_bool_satisfies_bool():

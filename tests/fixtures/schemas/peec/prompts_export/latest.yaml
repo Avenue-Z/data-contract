@@ -1,0 +1,8 @@
+# A deliberately non-semver stem: major-pin resolution must skip it, not crash.
+schema: peec.prompts_export
+version: 1.1.0
+kind: tabular
+fields:
+  - name: prompt
+    type: string
+    required: true
