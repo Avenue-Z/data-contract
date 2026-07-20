@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import pytest
+
 from contract_core.schema import Schema
 
 FIX = Path(__file__).parent / "fixtures" / "schemas"

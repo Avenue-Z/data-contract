@@ -3,6 +3,7 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+
 from contract_core.compile.odcs import to_odcs, validate_odcs
 from contract_core.contract import Contract
 from contract_core.resolver import Resolver

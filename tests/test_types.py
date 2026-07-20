@@ -1,6 +1,7 @@
 # tests/test_types.py
 import pytest
-from contract_core.types import Field, PANDAS_DTYPE, JSON_SCHEMA_TYPE
+
+from contract_core.types import JSON_SCHEMA_TYPE, PANDAS_DTYPE, Field
 
 
 def test_field_defaults_required_not_nullable():

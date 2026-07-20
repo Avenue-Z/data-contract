@@ -2,6 +2,7 @@
 import pandas as pd
 import pandera.pandas as pa
 import pytest
+
 from contract_core.compile.pandera_compile import to_pandera
 from contract_core.schema import Schema
 

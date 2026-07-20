@@ -15,7 +15,8 @@ def main() -> None:
 
 @main.command()
 @click.option("--contract", "contract_path", required=True, type=click.Path(exists=True))
-@click.option("--schemas", "schema_dirs", multiple=True, required=True, type=click.Path(exists=True))
+@click.option("--schemas", "schema_dirs", multiple=True, required=True,
+              type=click.Path(exists=True))
 def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     """Validate a contract: resolve every schema ref and compile to valid ODCS."""
     contract = Contract.from_yaml(contract_path)

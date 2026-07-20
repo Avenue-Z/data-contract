@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import pytest
+
 from contract_core.resolver import Resolver, SchemaNotFound
 
 FIX = Path(__file__).parent / "fixtures" / "schemas"

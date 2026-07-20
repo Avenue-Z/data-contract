@@ -1,13 +1,15 @@
 # tests/test_runtime.py
+from pathlib import Path
+
 import pandas as pd
 import pytest
+
 from contract_core.contract import Contract
 from contract_core.errors import ContractViolation
 from contract_core.events import EventLog
 from contract_core.resolver import Resolver
 from contract_core.runtime import ContractRuntime
 
-from pathlib import Path
 FIX = Path(__file__).parent / "fixtures"
 
 

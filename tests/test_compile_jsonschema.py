@@ -27,8 +27,9 @@ def test_closed_payload_forbids_additional_properties():
 
 
 def test_passthrough_returns_authored_json_schema():
+    authored = {"type": "object", "properties": {"a": {"type": "string"}}}
     s = Schema.model_validate({
         "schema": "x.y", "version": "1.0.0", "kind": "payload",
-        "json_schema": {"type": "object", "properties": {"a": {"type": "string"}}},
+        "json_schema": authored,
     })
-    assert to_json_schema(s, open=True) == {"type": "object", "properties": {"a": {"type": "string"}}}
+    assert to_json_schema(s, open=True) == authored

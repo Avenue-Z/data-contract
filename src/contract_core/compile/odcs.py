@@ -4,7 +4,7 @@ from importlib import resources
 
 import jsonschema
 
-from contract_core.contract import BoundarySpec, Contract
+from contract_core.contract import Contract
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
 

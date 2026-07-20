@@ -1,6 +1,6 @@
 # src/contract_core/runtime.py
 import functools
-from typing import Callable
+from collections.abc import Callable
 
 import pandas as pd
 import pandera.pandas as pa

@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from click.testing import CliRunner
+
 from contract_core.cli import main
 
 FIX = Path(__file__).parent / "fixtures"
