@@ -2,7 +2,8 @@
 import functools
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
@@ -232,3 +233,26 @@ class _DisabledRuntime(ContractRuntime):
 
     def output(self, name: str) -> Decorator:
         return _passthrough
+
+
+def load_runtime(
+    contract_path: str | Path = "contract.yaml",
+    *,
+    schema_paths: Sequence[str | Path] = ("schemas",),
+    enabled: bool = True,
+) -> ContractRuntime:
+    """Build a runtime from a contract file, or a disabled no-op runtime.
+
+    Returns a disabled runtime — no validation, no file I/O, one loud warning at
+    construction — when CONTRACT_DISABLED is *on* in the environment OR when
+    enabled=False. CONTRACT_DISABLED is on iff present and not in
+    {"", "0", "false", "no"} (case-insensitive); so =0 / =false leave validation ON.
+    "Off wins": there is no way to force validation on over the env kill switch.
+    Otherwise loads the contract and resolver and returns an enforcing runtime.
+    """
+    if _env_disabled() or not enabled:
+        # Pass the path as the label: the factory knows it without parsing the file.
+        return ContractRuntime.disabled(str(contract_path))
+    contract = Contract.from_yaml(contract_path)
+    resolver = Resolver(list(schema_paths))
+    return ContractRuntime(contract, resolver)
