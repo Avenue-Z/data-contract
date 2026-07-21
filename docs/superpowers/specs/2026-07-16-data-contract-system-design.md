@@ -433,6 +433,14 @@ fixtures, matching #1–#3:
 
 Named so they don't evaporate. Each has an owner-phase; none is hand-waved.
 
+**Close a row in the same PR that lands its mitigation.** This table is what anyone — human or agent —
+answers "what is left?" from, and a row describing shipped work as pending is worse than a missing
+row: it reads as authoritative and sends someone to rebuild what exists. That is not hypothetical.
+R8 shipped 2026-07-20 and its row still said "Phase 1, decide before the type vocabulary hardens"
+until 2026-07-21, and it produced exactly that wrong answer in the meantime. A closure needs the
+date, the commit, and *which* of the offered options was taken — the row's own alternatives are the
+first thing a reader will otherwise re-litigate.
+
 | # | Risk | Where it bites | Owned by | Mitigation (in-spec) |
 | --- | --- | --- | --- | --- |
 | R1 | **JSON Schema draft normalizer.** Pydantic emits 2020-12; Karapace compat is Draft-07; Ajv must be configured per-draft. `$ref` siblings, `unevaluatedProperties`, and tuple validation (`prefixItems` vs `items`-array) changed between drafts. | The **compat boundary only** (Phase 2) — the Python runtime validator uses Pandera/Pydantic on 2020-12 directly and never round-trips through Draft-07. Failure = compat engine and runtime disagree about what a schema *means*. | Phase 2 (before `compat` ships) | Constrain the *authored* schema subset to the draft intersection (no `prefixItems`, no `unevaluatedProperties`), targeting **identity on the constrained subset** — not merely "near-identity" — enforced by a round-trip corpus test asserting normalize(2020-12)→Draft-07 preserves every accept/reject decision. The goal is no mismatch left to manage, not a managed mismatch. Scoped, tested deliverable. |
@@ -442,7 +450,7 @@ Named so they don't evaporate. Each has an owner-phase; none is hand-waved.
 | R5 | **Version GC deletes a live low-frequency dependency.** Annual/ad-hoc jobs have no cron cadence to bound a runtime-only grace window. | Maintenance tooling | Deferred | Static evidence (lockfile refs across all repos) is **primary** and alone keeps a version live; runtime event log is a supplement marking hot/cold; delete only when unreferenced *and* cold past a grace window (§9). |
 | R6 | **JS validates a weaker form than Python.** Per the Portable Core principle (decision #1), the shared compiled JSON Schema carries only the structural core; Pandera value/cross-column/custom checks are Python-only, so JS accepts payloads Python would reject for the same named schema. | Cross-language validation of tabular schemas | Phase 3 (JS SDK) | `compat` also reasons only over the core, so compatibility is uncorrupted (§6, decision #1); checks that must hold in *both* languages are authored in the structural core, not as Pandera-only checks; document the weaker-form guarantee at the JS SDK boundary. |
 | R7 | **Authoring skill underperforms silently.** The skill (§5.5) is what makes Phase 1's "new automations get contracts by default" true, but unlike the runtime it has no replay test — its failure is silent (people just don't write contracts) and uncaught. | Phase 1 adoption promise | Phase 1 | Dogfood on the next **N≥5** new automations; measure contract-adoption rate *without nagging* (adoption that needs a human reminder means the skill failed). **Threshold: <80% adopting a contract unprompted = skill defect**, revisit the skill — not a discipline problem. (Numbers are a starting placeholder so the risk can actually trip; tune once there's data.) |
-| R8 | **Physical-dtype brittleness in tabular validation.** `to_pandera` compiles our logical `type` to one pandas dtype and validates with `coerce=False`, so a boundary hard-fails whenever pandas *infers* a different *physical* dtype for semantically-fine data: `int64` where the schema declared `float`/`Int64` (a client CSV with no null/decimal positions), `object` vs `str` across pandas 2↔3, or an all-null column arriving as `object`. Surfaced live in the Phase 0 pilot (pandas 3.0); it passed only because four verticals happened to infer identical dtypes. A drift-detector that false-positives on valid data is one people disable — worse than none. | Runtime tabular validation, **every consuming repo** | **Phase 1** (before `enforce` spreads past the pilot) | Match on **logical type families** (numeric / string / temporal / boolean) rather than one physical dtype, *or* run a non-mutating **convertibility** check (does the column read as the declared type without loss?) instead of exact-dtype equality — while still rejecting a genuine type change (criterion #1). `coerce=True` is not the fix: it would hide the very drift criterion #1 exists to catch. Decide before the type vocabulary hardens across repos. |
+| R8 | **Physical-dtype brittleness in tabular validation.** `to_pandera` compiles our logical `type` to one pandas dtype and validates with `coerce=False`, so a boundary hard-fails whenever pandas *infers* a different *physical* dtype for semantically-fine data: `int64` where the schema declared `float`/`Int64` (a client CSV with no null/decimal positions), `object` vs `str` across pandas 2↔3, or an all-null column arriving as `object`. Surfaced live in the Phase 0 pilot (pandas 3.0); it passed only because four verticals happened to infer identical dtypes. A drift-detector that false-positives on valid data is one people disable — worse than none. | Runtime tabular validation, **every consuming repo** | **Phase 1** (before `enforce` spreads past the pilot) | **CLOSED 2026-07-20** (`67e1b8d`, PR #7). Took the type-families option: `contract_core.families.dtype_satisfies` matches on logical families and `to_pandera` compiles `dtype=None` plus a non-mutating `dtype_family:<type>` check, so an inferred-but-equivalent dtype passes. `coerce=False` is retained and commented as load-bearing — it was never the fix, because coercion hides the drift criterion #1 exists to catch. The true-negatives are the load-bearing half and are tested: a stringified number fails, a real decimal declared `int` fails, `bool` and `int` stay distinct. An all-null column satisfies any type by design (its dtype is uninformative; `nullable` enforces null-tolerance separately). 21 tests in `tests/test_families.py`. |
 | R9 | **Distribution & public API surface.** `contract-core` installs only as an editable local path at `0.0.1`, exports just `__version__`, and consumers import deep module paths (`contract_core.runtime`, `.contract`, `.errors`, `.resolver`). CI on another machine cannot install it, and any internal refactor breaks every consuming repo at once. Invisible from the pilot alone; a hard blocker for "first thing in every new repo." | Adoption / topology (§10) | **Phase 1** (prerequisite to repo #2) | Publish a versioned artifact (private index or pinned git-tag ref); curate a stable public API in `__init__.py` and treat deep module paths as private. **CLOSED 2026-07-21** — designed, implemented, merged, and released: `v0.1.0` is tagged on `main`, so `contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.1.0` now resolves. Read [`CHANGELOG.md`](../../../CHANGELOG.md) for the release notes and [`docs/consuming-repo-setup.md`](../../consuming-repo-setup.md) for the consumer setup. The delivered surface is exactly five names — `load_runtime`, `ContractRuntime`, `ContractViolation`, `FieldDiff`, `__version__` — narrower than this row's original sketch: `Contract` and `Schema` were deliberately **excluded** as loading/authoring internals a consumer never needs, and `EventLog` excluded because exporting it would promise the sink hook §15 item 5 has not built. A frozen-surface test enforces the set. |
 | R10 | **The authored format is itself unversioned.** The schema/contract YAML is the real API surface but carries no format-version; a `contract-core` format change breaks every repo's authored files with no migration — the system has a compatibility story for *data* (§9) but none for *its own artifacts*. | Format evolution across repos | **Phase 1/2** | Add an explicit format `apiVersion` to the schema and contract formats before broad adoption; define a format-compat policy (loudly reject/migrate an unknown format version, never silently mis-parse). |
 
@@ -465,7 +473,9 @@ belong in this repo, not in any one pilot.**
 
 **New — fix in `data-contract` (the library); every new repo inherits these**
 1. **Physical-dtype brittleness → R8.** The single most important correctness finding. The pilot's
-   green run was partly luck of inference.
+   green run was partly luck of inference. ***CLOSED 2026-07-20** (`67e1b8d`, PR #7) — logical type
+   families replace exact-dtype equality. See the R8 row in §14 for what shipped and why
+   `coerce=False` stayed.*
 2. **Distribution + no stable public API → R9.** Editable-local-path install and deep imports are an
    adoption blocker, invisible from inside the pilot. ***CLOSED 2026-07-21.** Designed 2026-07-20,
    implemented and merged 2026-07-21, and **`v0.1.0` is tagged on `main`** — which is the step that
@@ -486,9 +496,13 @@ belong in this repo, not in any one pilot.**
    alongside the runtime.*
 5. **Library-hygiene defects to clear alongside the above:** `ContractRuntime.REGISTRY` is
    process-global mutable class state (leaks across contracts/tests — the pilot's registry assertion is
-   already order-dependent); an empty (0-row) result frame is reported as "all columns missing" instead
+   already order-dependent); ~~an empty (0-row) result frame is reported as "all columns missing" instead
    of "structurally valid, no rows", so a gracefully-handled empty case becomes a confusing
-   `ContractViolation`; runtime error-classification parses library internals (`check ==
+   `ContractViolation`~~ — **this one no longer reproduces**: a 0-row frame carrying the declared
+   columns now passes, because R8's family check treats an empty/all-null series as satisfying any
+   type. Only a wholly column-less `pd.DataFrame()` fails, and reporting *that* as missing columns is
+   correct. Closed as a side effect of `67e1b8d`, verified 2026-07-21; runtime error-classification
+   parses library internals (`check ==
    "column_in_dataframe"`, `jsonschema` message-splitting) and is fragile across the pinned-dependency
    bumps; the `schema` field shadows `BaseModel.schema` (a `UserWarning` every run — use a Pydantic
    alias); the event log (§4.4) is a hardcoded local JSONL with no sink abstraction and, in `observe`,
@@ -515,3 +529,9 @@ reconciliation was needed. All friction lived in items 1–8, none of which bloc
 which **compound across repos**. Recommendation: clear **R8, R9, and item 4** before onboarding repo #2
 — they are the difference between "drop it in and it helps" and "drop it in and it cries wolf / can't
 install / silently misses the real bugs."
+
+**Progress against that gate (2026-07-21):** R8 closed (`67e1b8d`) — it no longer cries wolf. R9
+closed and released as `v0.1.0` — it installs. **Item 4 is the last of the three**, and it is the
+"silently misses the real bugs" one: until the enrichment attach-point exists, the corruption this
+pilot is most likely to actually meet — sentiment out of range, `is_owned ∉ {0,1}`, negative ranks,
+empty `brand` — passes validation. Structural drift is caught; nonsense values are not.
