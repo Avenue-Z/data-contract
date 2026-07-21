@@ -1,7 +1,7 @@
 # src/contract_core/runtime.py
 import functools
-import logging
 import os
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -21,11 +21,9 @@ from contract_core.schema import Schema
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
 Problem = Literal["missing", "retyped", "nullable", "extra"]
 
-_LOG = logging.getLogger("contract_core")
-
 # `CONTRACT_DISABLED` is an ops kill switch, so its activation rule is pinned, not "truthy"
-# (R9 design §3.3): typing `0`/`false` must turn the switch OFF, not disable every contract.
-_ENV_OFF_VALUES = frozenset({"", "0", "false", "no"})
+# (R9 design §3.3): typing `0`/`false`/`off` must turn the switch OFF, not disable every contract.
+_ENV_OFF_VALUES = frozenset({"", "0", "false", "no", "off"})
 
 
 def _env_disabled() -> bool:
@@ -52,21 +50,28 @@ class ContractRuntime:
         self.event_log = event_log or EventLog()
         self.clock = clock or _default_clock
 
-    @classmethod
-    def disabled(cls, label: str | None = None) -> "ContractRuntime":
+    @staticmethod
+    def disabled(label: str | None = None) -> "ContractRuntime":
         """Return a no-op runtime and announce it once, loudly, on stderr.
 
         Turning validation off is itself a loud act (R9 design §3.3): "why is nothing
         validating?" must be diagnosable from a positive signal, not inferred from the
-        absence of failures. Deliberately a log warning and NOT an event-log write — an
-        event write is file I/O that can itself fail, reintroducing exactly the import-time
-        crash graceful degradation exists to prevent.
+        absence of failures. Deliberately NOT an event-log write — an event write is file
+        I/O that can itself fail, reintroducing exactly the import-time crash graceful
+        degradation exists to prevent.
+
+        Deliberately a bare stderr write and NOT `logging.warning`, either: the consumer
+        doc's guarantee is that the absence of this line means validation is on, and a
+        single `basicConfig`/`dictConfig` in the consuming app can delete a log record.
+        A signal the consumer can silently reconfigure away is not a kill-switch
+        announcement — it reintroduces the inference-from-silence foot-gun.
 
         `label` is a best-available identifier (the factory passes the contract path). A
         disabled runtime reads no files, so it can never learn the contract's `system` name.
         """
         trigger = "CONTRACT_DISABLED set" if _env_disabled() else "explicitly disabled"
-        _LOG.warning("contract validation DISABLED (%s) [%s]", trigger, label or "unspecified")
+        print(f"contract validation DISABLED ({trigger}) [{label or 'unspecified'}]",
+              file=sys.stderr)
         return _DisabledRuntime()
 
     def _spec(self, direction: str, name: str) -> BoundarySpec:
@@ -246,7 +251,8 @@ def load_runtime(
     Returns a disabled runtime — no validation, no file I/O, one loud warning at
     construction — when CONTRACT_DISABLED is *on* in the environment OR when
     enabled=False. CONTRACT_DISABLED is on iff present and not in
-    {"", "0", "false", "no"} (case-insensitive); so =0 / =false leave validation ON.
+    {"", "0", "false", "no", "off"} (case-insensitive); so =0 / =false / =off leave
+    validation ON.
     "Off wins": there is no way to force validation on over the env kill switch.
     Otherwise loads the contract and resolver and returns an enforcing runtime.
     """

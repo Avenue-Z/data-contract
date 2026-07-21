@@ -40,6 +40,8 @@ def test_git_ref_install_exposes_the_public_api(tmp_path):
     venv = tmp_path / "venv"
     created = _run(sys.executable, "-m", "venv", str(venv))
     assert created.returncode == 0, created.stderr
+    # POSIX layout, by decision not by accident: this repo's targets are macOS dev machines
+    # and ubuntu CI. On Windows this is `Scripts/python.exe` and the test would need a branch.
     py = venv / "bin" / "python"
 
     # This test is about the git-ref resolve and the source build, NOT about re-resolving
@@ -57,9 +59,14 @@ def test_git_ref_install_exposes_the_public_api(tmp_path):
     assert site_dir.returncode == 0, site_dir.stderr
     (Path(site_dir.stdout.strip()) / "_outer_deps.pth").write_text(outer_purelib + "\n")
 
-    spec = f"contract-core @ git+file://{REPO}@{sha}"
+    # `as_uri()` rather than f"file://{REPO}": a checkout path containing a space or `#`
+    # produces an URL that does not round-trip.
+    spec = f"contract-core @ git+{REPO.as_uri()}@{sha}"
+    # `--no-build-isolation` so the build backend comes from the outer env (hatchling is in
+    # the `dev` extra, reachable through the .pth above) instead of a cold-cache PyPI fetch.
+    # Otherwise a PyPI blip reddens CI on a test that has nothing to do with the change.
     installed = _run(str(py), "-m", "pip", "install", "--quiet", "--no-deps",
-                     "--ignore-installed", spec)
+                     "--no-build-isolation", "--ignore-installed", spec)
     assert installed.returncode == 0, installed.stderr
 
     probe = (

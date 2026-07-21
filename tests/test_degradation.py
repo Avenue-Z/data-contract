@@ -1,4 +1,5 @@
 # tests/test_degradation.py
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -7,10 +8,10 @@ import pytest
 from contract_core.errors import ContractViolation
 from contract_core.runtime import ContractRuntime, _env_disabled, load_runtime
 
-# The pinned truth table (R9 design §3.3). An operator typing `0` or `false` must NOT
+# The pinned truth table (R9 design §3.3). An operator typing `0`, `false` or `off` must NOT
 # accidentally disable every contract in the fleet, so those are OFF values, not "truthy".
 ON_VALUES = ["1", "true", "TRUE", "yes", "on", "  1  ", "disabled", "please"]
-OFF_VALUES = ["", "0", "false", "FALSE", "no", "No", "  0  "]
+OFF_VALUES = ["", "0", "false", "FALSE", "no", "No", "  0  ", "off", "OFF", "  off  "]
 
 
 @pytest.mark.parametrize("value", ON_VALUES)
@@ -74,32 +75,51 @@ def test_disabled_runtime_does_no_file_io(monkeypatch, tmp_path):
     assert not events.exists()
 
 
-def test_disabled_warns_once_naming_trigger_and_label(monkeypatch, caplog):
+def _announcements(capsys):
+    """The disabled-runtime announcements written to stderr.
+
+    Asserted on stderr, not via `caplog`: the announcement is deliberately a bare write and
+    not a log record, because a consumer's logging config can delete a record and the
+    consumer doc guarantees that the absence of this line means validation is on.
+    """
+    return [line for line in capsys.readouterr().err.splitlines() if "DISABLED" in line]
+
+
+def test_disabled_warns_once_naming_trigger_and_label(monkeypatch, capsys):
     monkeypatch.delenv("CONTRACT_DISABLED", raising=False)
-    with caplog.at_level("WARNING", logger="contract_core"):
+    ContractRuntime.disabled("contract.yaml")
+    lines = _announcements(capsys)
+    assert len(lines) == 1
+    assert lines[0] == "contract validation DISABLED (explicitly disabled) [contract.yaml]"
+
+
+def test_disabled_announces_even_when_logging_is_configured_away(monkeypatch, capsys):
+    # The guarantee the doc makes: a consumer that reconfigures logging cannot silence this.
+    monkeypatch.delenv("CONTRACT_DISABLED", raising=False)
+    logging.disable(logging.CRITICAL)
+    try:
         ContractRuntime.disabled("contract.yaml")
-    warnings = [r for r in caplog.records if "DISABLED" in r.getMessage()]
-    assert len(warnings) == 1
-    assert warnings[0].getMessage() == (
+    finally:
+        logging.disable(logging.NOTSET)
+    assert _announcements(capsys) == [
         "contract validation DISABLED (explicitly disabled) [contract.yaml]"
+    ]
+
+
+def test_disabled_names_the_env_var_when_it_is_the_trigger(monkeypatch, capsys):
+    monkeypatch.setenv("CONTRACT_DISABLED", "1")
+    ContractRuntime.disabled("contract.yaml")
+    assert _announcements(capsys)[-1] == (
+        "contract validation DISABLED (CONTRACT_DISABLED set) [contract.yaml]"
     )
 
 
-def test_disabled_names_the_env_var_when_it_is_the_trigger(monkeypatch, caplog):
-    monkeypatch.setenv("CONTRACT_DISABLED", "1")
-    with caplog.at_level("WARNING", logger="contract_core"):
-        ContractRuntime.disabled("contract.yaml")
-    msg = caplog.records[-1].getMessage()
-    assert msg == "contract validation DISABLED (CONTRACT_DISABLED set) [contract.yaml]"
-
-
-def test_disabled_with_no_label_reads_unspecified(monkeypatch, caplog):
+def test_disabled_with_no_label_reads_unspecified(monkeypatch, capsys):
     # A disabled runtime does no file I/O, so it cannot read the contract to learn the
     # system name. It names what it actually has.
     monkeypatch.delenv("CONTRACT_DISABLED", raising=False)
-    with caplog.at_level("WARNING", logger="contract_core"):
-        ContractRuntime.disabled()
-    assert "[unspecified]" in caplog.records[-1].getMessage()
+    ContractRuntime.disabled()
+    assert "[unspecified]" in _announcements(capsys)[-1]
 
 
 FIX = Path(__file__).parent / "fixtures"
@@ -118,53 +138,52 @@ def _enforcing_loader(rt):
 
 
 def test_enabled_by_default_still_hard_fails_and_stays_quiet(
-    monkeypatch, caplog, event_log_path
+    monkeypatch, capsys, event_log_path
 ):
     # True negative: the toggle must not disable anything when nobody asked.
     monkeypatch.delenv("CONTRACT_DISABLED", raising=False)
-    with caplog.at_level("WARNING", logger="contract_core"):
-        rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS])
+    rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS])
     with pytest.raises(ContractViolation):
         _enforcing_loader(rt)()
-    assert not [r for r in caplog.records if "DISABLED" in r.getMessage()]
+    assert not _announcements(capsys)
 
 
-def test_env_var_set_to_zero_does_not_disable(monkeypatch, caplog, event_log_path):
-    # The foot-gun case: an operator typing `0` must NOT disable the fleet.
-    monkeypatch.setenv("CONTRACT_DISABLED", "0")
-    with caplog.at_level("WARNING", logger="contract_core"):
-        rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS])
+@pytest.mark.parametrize("value", ["0", "off"])
+def test_env_var_set_to_an_off_value_does_not_disable(
+    value, monkeypatch, capsys, event_log_path
+):
+    # The foot-gun case: an operator typing `0` or `off` must NOT disable the fleet.
+    monkeypatch.setenv("CONTRACT_DISABLED", value)
+    rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS])
     with pytest.raises(ContractViolation):
         _enforcing_loader(rt)()
-    assert not [r for r in caplog.records if "DISABLED" in r.getMessage()]
+    assert not _announcements(capsys)
 
 
-def test_env_var_disables_and_warns(monkeypatch, caplog, event_log_path):
+def test_env_var_disables_and_warns(monkeypatch, capsys, event_log_path):
     monkeypatch.setenv("CONTRACT_DISABLED", "1")
-    with caplog.at_level("WARNING", logger="contract_core"):
-        rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS])
+    rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS])
     assert _enforcing_loader(rt)() is not None  # returns its data, unchanged
     assert not event_log_path.exists()
-    msg = caplog.records[-1].getMessage()
-    assert msg == f"contract validation DISABLED (CONTRACT_DISABLED set) [{CONSUMER_CONTRACT}]"
+    assert _announcements(capsys)[-1] == (
+        f"contract validation DISABLED (CONTRACT_DISABLED set) [{CONSUMER_CONTRACT}]"
+    )
 
 
-def test_enabled_false_disables_and_warns(monkeypatch, caplog, event_log_path):
+def test_enabled_false_disables_and_warns(monkeypatch, capsys, event_log_path):
     monkeypatch.delenv("CONTRACT_DISABLED", raising=False)
-    with caplog.at_level("WARNING", logger="contract_core"):
-        rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS], enabled=False)
+    rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS], enabled=False)
     assert _enforcing_loader(rt)() is not None
     assert not event_log_path.exists()
-    assert "explicitly disabled" in caplog.records[-1].getMessage()
+    assert "explicitly disabled" in _announcements(capsys)[-1]
 
 
-def test_off_always_wins_over_application_code(monkeypatch, caplog, event_log_path):
+def test_off_always_wins_over_application_code(monkeypatch, capsys, event_log_path):
     # A module hardcoding enabled=True cannot defeat the ops kill switch (R9 design §3.3).
     monkeypatch.setenv("CONTRACT_DISABLED", "1")
-    with caplog.at_level("WARNING", logger="contract_core"):
-        rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS], enabled=True)
+    rt = load_runtime(CONSUMER_CONTRACT, schema_paths=[SCHEMAS], enabled=True)
     assert _enforcing_loader(rt)() is not None
-    assert "CONTRACT_DISABLED set" in caplog.records[-1].getMessage()
+    assert "CONTRACT_DISABLED set" in _announcements(capsys)[-1]
 
 
 def test_disabled_factory_reads_no_contract_file(monkeypatch, tmp_path):

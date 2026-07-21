@@ -26,10 +26,13 @@ path, so no other repo could depend on it (risk R9).
   contract file, or returns a disabled no-op runtime.
 - **`ContractRuntime.disabled(label)`** — a no-op runtime whose `raw`/`input`/`output` are
   the identity decorator. It performs no validation, no schema resolution and **no file
-  I/O**, and emits exactly one `logging.warning` at construction naming the trigger.
+  I/O**, and writes exactly one line to `sys.stderr` at construction naming the trigger.
+  Deliberately not a `logging` record: the guarantee is that the line's absence means
+  validation is on, and a consumer's logging configuration can delete a record.
 - **`CONTRACT_DISABLED` kill switch.** On iff present and its value, stripped and
-  lowercased, is not one of `""`, `"0"`, `"false"`, `"no"`. So `=1`/`=true`/`=yes`/`=on`
-  disable; `=0`/`=false`/`=no`/empty/unset leave validation enabled. **"Off always wins"** —
+  lowercased, is not one of `""`, `"0"`, `"false"`, `"no"`, `"off"`. So `=1`/`=true`/`=yes`/
+  `=on` disable; `=0`/`=false`/`=no`/`=off`/empty/unset leave validation enabled — the
+  values name the state of *the switch*, not of validation. **"Off always wins"** —
   application code passing `enabled=True` cannot override the env var.
 - **Consumer documentation** — `docs/consuming-repo-setup.md` covers the git-tag pin, the
   deploy-token prerequisite, the kill switch, and the absent-library fallback pattern.
@@ -38,14 +41,17 @@ path, so no other repo could depend on it (risk R9).
 ### Changed
 
 - **Version `0.0.1` → `0.1.0`**, and a test now fails if `__version__` skews from the
-  version in `pyproject.toml`.
+  version declared in `pyproject.toml` (read from the file, so it holds on a dev machine
+  with a stale editable install too).
 
 ### Notes for consumers
 
-- **Deep module paths are private.** `contract_core.runtime`, `.contract`, `.resolver`,
-  `.schema`, `.events`, `.types`, `.families`, `.compile.*` and `.cli` may change without a
-  major bump. Import only the five public names; run the CLI via the `contract` console
-  script.
+- **Deep module paths are private.** `contract_core.runtime`, `.errors`, `.contract`,
+  `.resolver`, `.schema`, `.events`, `.types`, `.families`, `.vendor`, `.compile.*` and
+  `.cli` may change without a major bump. The list is exhaustive and includes `.runtime`
+  and `.errors`, where the exported names are defined — import the five public names from
+  `contract_core` itself, not from the module they live in. Run the CLI via the `contract`
+  console script.
 - **No auto-degrade.** A missing or malformed contract file raises; it never silently
   disables validation.
 - `EventLog` is deliberately *not* exported and `load_runtime` takes no `event_log`

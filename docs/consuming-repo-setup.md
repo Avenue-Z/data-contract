@@ -30,9 +30,12 @@ from contract_core import load_runtime, ContractRuntime, ContractViolation, Fiel
 ```
 
 Those five names (plus `__version__`) are the whole supported surface. **Everything else is
-private** — `contract_core.runtime`, `.contract`, `.resolver`, `.schema`, `.events`, `.types`,
-`.families`, `.compile.*`, `.cli`. Import paths into those may change without a major bump. Run the
-CLI through the `contract` console script, not by importing `contract_core.cli`.
+private** — `contract_core.runtime`, `.errors`, `.contract`, `.resolver`, `.schema`, `.events`,
+`.types`, `.families`, `.vendor`, `.compile.*`, `.cli`. That list is exhaustive, and note that it
+includes `.runtime` and `.errors`: those are where the four exported names are *defined*, but
+`from contract_core.errors import FieldDiff` is not a supported import path — only
+`from contract_core import FieldDiff` is. Import paths into private modules may change without a
+major bump. Run the CLI through the `contract` console script, not by importing `contract_core.cli`.
 
 ```python
 runtime = load_runtime("contract.yaml", schema_paths=["schemas"])
@@ -58,10 +61,16 @@ Two knobs, and **"off always wins"**:
 | neither | **enabled** (the default) |
 
 `CONTRACT_DISABLED` is **on** iff it is present *and* its value, stripped and lowercased, is not one
-of `""`, `"0"`, `"false"`, `"no"`. So:
+of `""`, `"0"`, `"false"`, `"no"`, `"off"`. So:
 
 - disables: `CONTRACT_DISABLED=1`, `=true`, `=yes`, `=on`
-- leaves validation **enabled**: `CONTRACT_DISABLED=0`, `=false`, `=no`, `=` (empty), and unset
+- leaves validation **enabled**: `CONTRACT_DISABLED=0`, `=false`, `=no`, `=off`, `=` (empty), and
+  unset
+
+Read those as statements about *the switch*, not about validation: `=on` turns the kill switch on
+(validation off), `=off` turns it off (validation on). Anything the list does not name — `=maybe`,
+`=disabled`, a stray `=x` — disables. The switch fails toward "not validating", so a value that is
+not clearly an off-value is treated as an operator asking for it.
 
 There is deliberately **no per-call opt-*in*** that overrides the env var — that is what makes
 `CONTRACT_DISABLED` a real ops kill switch. A module hardcoding `enabled=True` cannot defeat it.
@@ -74,7 +83,10 @@ contract validation DISABLED (CONTRACT_DISABLED set) [contract.yaml]
 ```
 
 If you ever wonder "why is nothing validating?", that line is the answer, and its absence means
-validation is on. There is **no auto-degrade**: a missing or malformed contract file raises.
+validation is on. It is written straight to `sys.stderr`, deliberately not through `logging` — a
+`basicConfig` or `dictConfig` call in your app could delete a log record, and then the line's
+absence would prove nothing. Nothing you configure can silence it. There is **no auto-degrade**: a
+missing or malformed contract file raises.
 
 ## 4. If `contract-core` might not be installed
 
