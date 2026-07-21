@@ -1,5 +1,7 @@
 # src/contract_core/runtime.py
 import functools
+import logging
+import os
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -17,6 +19,20 @@ from contract_core.schema import Schema
 # A boundary decorator: wraps a data-producing function, validating its return value.
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
 Problem = Literal["missing", "retyped", "nullable", "extra"]
+
+_LOG = logging.getLogger("contract_core")
+
+# `CONTRACT_DISABLED` is an ops kill switch, so its activation rule is pinned, not "truthy"
+# (R9 design §3.3): typing `0`/`false` must turn the switch OFF, not disable every contract.
+_ENV_OFF_VALUES = frozenset({"", "0", "false", "no"})
+
+
+def _env_disabled() -> bool:
+    """Is the `CONTRACT_DISABLED` kill switch on? Present and not an off-value."""
+    raw = os.environ.get("CONTRACT_DISABLED")
+    if raw is None:
+        return False
+    return raw.strip().lower() not in _ENV_OFF_VALUES
 
 
 def _default_clock() -> str:
