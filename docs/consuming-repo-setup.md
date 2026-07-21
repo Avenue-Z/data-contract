@@ -20,7 +20,8 @@ operational cost of the git-tag approach. A missing token shows up as a `pip` cl
 install time, not as anything contract-shaped.
 
 **Versioning:** `contract-core` is pre-1.0. Under 0.x semantics a **minor** bump may carry breaking
-changes to the authored format or the API. Read the release notes before moving a pin.
+changes to the authored format or the API. Read the release notes — [`CHANGELOG.md`](../CHANGELOG.md),
+the canonical record — before moving a pin.
 
 ## 2. Import only the public API
 
@@ -43,8 +44,8 @@ def load_prompts():
 
 `load_runtime`'s `schema_paths` default (`("schemas",)`) is signature-stable, but if the central
 `avenue-z-schemas` path is later prepended to that default, a different schema may resolve. That
-will be called out as a **behavior** change in the release notes — a stable signature is not a
-promise of stable resolved bytes.
+will be called out as a **behavior** change in [`CHANGELOG.md`](../CHANGELOG.md) — a stable signature
+is not a promise of stable resolved bytes.
 
 ## 3. Turning validation off
 
