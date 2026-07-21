@@ -1,6 +1,9 @@
 # src/contract_core/runtime.py
 import functools
-from collections.abc import Callable
+import os
+import sys
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
@@ -18,6 +21,18 @@ from contract_core.schema import Schema
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
 Problem = Literal["missing", "retyped", "nullable", "extra"]
 
+# `CONTRACT_DISABLED` is an ops kill switch, so its activation rule is pinned, not "truthy"
+# (R9 design §3.3): typing `0`/`false`/`off` must turn the switch OFF, not disable every contract.
+_ENV_OFF_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def _env_disabled() -> bool:
+    """Is the `CONTRACT_DISABLED` kill switch on? Present and not an off-value."""
+    raw = os.environ.get("CONTRACT_DISABLED")
+    if raw is None:
+        return False
+    return raw.strip().lower() not in _ENV_OFF_VALUES
+
 
 def _default_clock() -> str:
     from datetime import UTC, datetime
@@ -34,6 +49,30 @@ class ContractRuntime:
         self.resolver = resolver
         self.event_log = event_log or EventLog()
         self.clock = clock or _default_clock
+
+    @staticmethod
+    def disabled(label: str | None = None) -> "ContractRuntime":
+        """Return a no-op runtime and announce it once, loudly, on stderr.
+
+        Turning validation off is itself a loud act (R9 design §3.3): "why is nothing
+        validating?" must be diagnosable from a positive signal, not inferred from the
+        absence of failures. Deliberately NOT an event-log write — an event write is file
+        I/O that can itself fail, reintroducing exactly the import-time crash graceful
+        degradation exists to prevent.
+
+        Deliberately a bare stderr write and NOT `logging.warning`, either: the consumer
+        doc's guarantee is that the absence of this line means validation is on, and a
+        single `basicConfig`/`dictConfig` in the consuming app can delete a log record.
+        A signal the consumer can silently reconfigure away is not a kill-switch
+        announcement — it reintroduces the inference-from-silence foot-gun.
+
+        `label` is a best-available identifier (the factory passes the contract path). A
+        disabled runtime reads no files, so it can never learn the contract's `system` name.
+        """
+        trigger = "CONTRACT_DISABLED set" if _env_disabled() else "explicitly disabled"
+        print(f"contract validation DISABLED ({trigger}) [{label or 'unspecified'}]",
+              file=sys.stderr)
+        return _DisabledRuntime()
 
     def _spec(self, direction: str, name: str) -> BoundarySpec:
         group = {"raw": self.contract.raw, "input": self.contract.inputs,
@@ -173,3 +212,53 @@ class ContractRuntime:
                                                observed=type(payload[k]).__name__,
                                                problem="extra"))
         return diffs, observed
+
+
+def _passthrough(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """The identity decorator: no wrapper, no validation, no events, no overhead."""
+    return fn
+
+
+class _DisabledRuntime(ContractRuntime):
+    """Every boundary is a pass-through. Reachable only via `ContractRuntime.disabled()`.
+
+    It deliberately does not call `ContractRuntime.__init__`: a disabled runtime has no
+    contract and no resolver, and *acquiring* them is the file I/O this class exists to
+    avoid. Touching `.contract` or `.resolver` on one is an error, by construction.
+    """
+
+    def __init__(self) -> None:
+        pass
+
+    def raw(self, name: str) -> Decorator:
+        return _passthrough
+
+    def input(self, name: str) -> Decorator:
+        return _passthrough
+
+    def output(self, name: str) -> Decorator:
+        return _passthrough
+
+
+def load_runtime(
+    contract_path: str | Path = "contract.yaml",
+    *,
+    schema_paths: Sequence[str | Path] = ("schemas",),
+    enabled: bool = True,
+) -> ContractRuntime:
+    """Build a runtime from a contract file, or a disabled no-op runtime.
+
+    Returns a disabled runtime — no validation, no file I/O, one loud warning at
+    construction — when CONTRACT_DISABLED is *on* in the environment OR when
+    enabled=False. CONTRACT_DISABLED is on iff present and not in
+    {"", "0", "false", "no", "off"} (case-insensitive); so =0 / =false / =off leave
+    validation ON.
+    "Off wins": there is no way to force validation on over the env kill switch.
+    Otherwise loads the contract and resolver and returns an enforcing runtime.
+    """
+    if _env_disabled() or not enabled:
+        # Pass the path as the label: the factory knows it without parsing the file.
+        return ContractRuntime.disabled(str(contract_path))
+    contract = Contract.from_yaml(contract_path)
+    resolver = Resolver(list(schema_paths))
+    return ContractRuntime(contract, resolver)

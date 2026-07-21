@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contract-core"
-version = "0.0.1"
+version = "0.1.0"
 description = "Data contract core library — schemas, contracts, compilers, runtime validation."
 requires-python = ">=3.13"
 dependencies = [
@@ -20,8 +20,12 @@ dependencies = [
 # pre-commit is here because README's Setup step runs `pre-commit install` — the step that
 # installs the gitleaks hook, i.e. the one local security control. Without it in dev, a new
 # engineer following Setup verbatim gets `command not found` on exactly that line.
+#
+# hatchling is the build backend, normally supplied by pip's build isolation. It is here
+# because tests/test_distribution.py installs with --no-build-isolation, so the backend has
+# to already exist in the environment — that is what keeps the install test off PyPI.
 dev = ["pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8",
-       "pandas-stubs", "types-jsonschema", "types-PyYAML"]
+       "hatchling", "pandas-stubs", "types-jsonschema", "types-PyYAML"]
 
 [project.scripts]
 contract = "contract_core.cli:main"
