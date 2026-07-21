@@ -124,7 +124,8 @@ def load_runtime(
     Returns a disabled runtime — no validation, no file I/O, one loud warning at
     construction (§3.3) — when CONTRACT_DISABLED is *on* in the environment OR when
     enabled=False. CONTRACT_DISABLED is on iff present and not in
-    {"", "0", "false", "no"} (case-insensitive); so =0 / =false leave validation ON.
+    {"", "0", "false", "no", "off"} (case-insensitive); so =0 / =false / =off leave
+    validation ON.
     "Off wins": there is no way to force validation on over the env kill switch.
     Otherwise loads the contract and resolver and returns an enforcing runtime.
     """
@@ -153,8 +154,8 @@ Two failure modes, handled distinctly:
 - **One loud signal at construction (closes the silent-disable gap).** The warning lives in
   **`ContractRuntime.disabled()` itself**, not in `load_runtime` — so it fires regardless of entry
   point: a consumer calling the public `disabled()` classmethod directly gets the same signal as one
-  going through the factory. Constructing a disabled runtime emits exactly one `logging.warning` to
-  **stderr**, naming the trigger and a best-available label — e.g.
+  going through the factory. Constructing a disabled runtime writes exactly one line to **`sys.stderr`**,
+  naming the trigger and a best-available label — e.g.
   `contract validation DISABLED (CONTRACT_DISABLED set) [contract.yaml]`. Because a disabled runtime
   does **no file I/O**, it cannot read the contract to learn the `system` name, so it names what it
   actually has: `disabled(label: str | None = None)` takes an optional identifier, `load_runtime`
@@ -162,9 +163,17 @@ Two failure modes, handled distinctly:
   `disabled()` call with no label reads `unspecified`. The message never depends on loading a file.
   This is what makes
   "off" *loud* per decision #4: the diagnostic is a positive signal, not the inference-from-silence a
-  reviewer would (rightly) call a foot-gun. It is deliberately a **stderr warning, not an event-log
-  write** — an event write is file I/O that can itself fail, reintroducing exactly the import-time
-  crash item 7 exists to prevent; stderr has no such dependency and cannot crash an unrelated import.
+  reviewer would (rightly) call a foot-gun. It is deliberately **not an event-log write** — an event
+  write is file I/O that can itself fail, reintroducing exactly the import-time crash item 7 exists to
+  prevent; stderr has no such dependency and cannot crash an unrelated import.
+  It is also deliberately **not a `logging.warning`** (review round 3). A log record reaches stderr
+  only through `logging.lastResort`; a consumer that calls `basicConfig(level=ERROR)`, configures
+  handlers without propagation, or ships a `dictConfig` that never names `contract_core` gets
+  *nothing*. That would make the consumer-facing guarantee — *the absence of this line means
+  validation is on* — false, reintroducing inference-from-silence through the back door. A signal a
+  single `basicConfig` call can delete is not a kill-switch announcement, so the channel is a bare
+  `print(..., file=sys.stderr)` that nothing the consumer configures can silence. The cost is real
+  and accepted: consumers who *do* configure structured logging cannot route this line into it.
 - **Trigger, and precedence — "off always wins":** the runtime is disabled if `CONTRACT_DISABLED` is
   **on** in the environment **OR** `enabled=False` is passed. It is enabled only when `CONTRACT_DISABLED`
   is off *and* `enabled` is `True` (the default). There is deliberately **no way for application code to
@@ -173,11 +182,20 @@ Two failure modes, handled distinctly:
   `enabled=False`; there is intentionally no per-call opt-*in* that overrides ops.
 - **What "on" means for `CONTRACT_DISABLED` — pinned, because an ambiguous kill switch is an incident
   risk.** It is **not** "any truthy value / merely present." The var is **on** iff it is *present and
-  its value, lowercased and stripped, is not in `{"", "0", "false", "no"}`*. So `CONTRACT_DISABLED=1`,
-  `=true`, `=yes`, `=on` all disable; `CONTRACT_DISABLED=0`, `=false`, `=no`, `=` (empty), and *unset*
-  all leave validation **enabled**. This is the direction an operator intends: typing `0`/`false` turns
-  the switch *off*, it does not accidentally disable every contract. The single rule lives in one
-  private helper (`_env_disabled()`), so the factory and any other caller share identical semantics.
+  its value, lowercased and stripped, is not in `{"", "0", "false", "no", "off"}`*. So
+  `CONTRACT_DISABLED=1`, `=true`, `=yes`, `=on` all disable; `CONTRACT_DISABLED=0`, `=false`, `=no`,
+  `=off`, `=` (empty), and *unset* all leave validation **enabled**. This is the direction an operator
+  intends: typing `0`/`false`/`off` turns the switch *off*, it does not accidentally disable every
+  contract. The single rule lives in one private helper (`_env_disabled()`), so the factory and any
+  other caller share identical semantics.
+  `"off"` was **added in review round 3** — the first two rounds pinned `{"", "0", "false", "no"}`,
+  which made `CONTRACT_DISABLED=off` *disable* validation. It is the third member of the `0`/`false`
+  family and the miss was self-inflicted: the docs listed `=on` under "disables", teaching the
+  `on`/`off` vocabulary that `=off` then betrayed. A runbook line reading
+  `CONTRACT_DISABLED=off  # re-enable validation` would have shipped zero validation, silently.
+  Read the value names as describing **the switch**, not validation: `=on` turns the kill switch on,
+  `=off` turns it off. Anything not in the off-set still disables — the switch fails toward "not
+  validating", so an unrecognised value is read as an operator asking for it.
 
 **(B) Library not installed at all:** `contract-core` cannot catch its own missing import, so this is
 solved by a **consumer pattern**, documented in the §5.5 authoring skill, not by library code:

@@ -23,6 +23,22 @@ Read §3 and §5 before starting. Section references below (§3.2, §5 T1…T5) 
 **Branch:** work on the current `docs/r9-distribution-public-api` branch or cut a `feat/r9-*` branch
 from it. PR base is `dev` (see `CONTRIBUTING.md` — **never push to `main`**).
 
+## Superseded — read this before executing any task
+
+**This plan has been executed** (PR #10). It is kept as the record of what was intended, **not** as
+instructions to follow verbatim. Five things diverged, and in each case **the shipped code is
+canonical** — copying the snippet below it reintroduces a defect that review already caught.
+
+| Where | The plan says | What shipped, and why |
+|---|---|---|
+| Task 1 | Two tests: `test_version_is_0_1_0` asserting the literal, plus a check against `importlib.metadata` | One test, `test_version_matches_pyproject`, reading `pyproject.toml` with `tomllib`. The literal put the version in a *third* place while the release procedure names two, so the next release started red. The metadata comparison is a snapshot taken at install time — on a dev machine with a stale editable install it compares `__init__.py` against a version nobody ships and passes on a real skew. |
+| Task 2 | `_ENV_OFF_VALUES = frozenset({"", "0", "false", "no"})` | `{"", "0", "false", "no", "off"}`. As planned, `CONTRACT_DISABLED=off` **disabled** validation — the exact foot-gun the pinned table exists to prevent, and worse because the docs listed `=on` under "disables" and so taught the `on`/`off` vocabulary. |
+| Task 3 | The announcement is a `logging.warning` | A bare `print(..., file=sys.stderr)`. A log record reaches stderr only via `logging.lastResort`; one `basicConfig` call in the consuming app deletes it, which would falsify the consumer doc's guarantee that the line's absence means validation is on. |
+| Task 7 | `venv --system-site-packages` + `--no-deps` | A `.pth` naming the running interpreter's `purelib`, plus `--no-build-isolation` and `REPO.as_uri()`. See the note in Task 7 — the planned recipe **cannot work**. |
+| — | No `CHANGELOG.md` task | `CHANGELOG.md` was added. Task 8's consumer doc tells readers to "read the release notes before moving a pin" while no such artifact existed; it is now the canonical record, linked from both referencing sites, and the release procedure requires moving its entry when a version is cut. |
+
+The design spec has been amended for the Task 2 and Task 3 divergences, so §3.3 there is current.
+
 ## Global Constraints
 
 Every task inherits these. Values are copied verbatim from the design and the repo's existing config.
@@ -121,6 +137,12 @@ Run: `pytest tests/test_smoke.py -q`
 Expected: FAIL — `assert '0.0.1' == '0.1.0'` in `test_version_is_0_1_0`.
 (`test_version_matches_distribution_metadata` passes today — both sides are `0.0.1`. That is fine;
 it is the *regression* guard, and Step 4 proves it still holds after the bump.)
+
+> **Superseded — see the table at the top.** That parenthetical only holds while the editable install
+> is current: `importlib.metadata` reports what was recorded at install time, which is why Step 4
+> below has to exist at all. What shipped drops both of these tests for one that reads
+> `pyproject.toml` directly, so it is a real guard on a dev machine and not only in CI, and the
+> version stays in the two files the release procedure names.
 
 - [ ] **Step 3: Bump both version strings**
 
@@ -223,6 +245,10 @@ import os
 ```
 
 Then, immediately after the `Problem = Literal[...]` line (currently line 19), insert:
+
+> **Superseded — see the table at the top.** The off-set below is missing `"off"`, so
+> `CONTRACT_DISABLED=off` disables validation. Use `{"", "0", "false", "no", "off"}`. The `_LOG`
+> logger is gone too — see the Task 3 note.
 
 ```python
 _LOG = logging.getLogger("contract_core")
@@ -375,6 +401,12 @@ Expected: FAIL — `AttributeError: type object 'ContractRuntime' has no attribu
 
 In `src/contract_core/runtime.py`, add the `disabled` classmethod to `ContractRuntime`, immediately
 after `__init__` and before `_spec`:
+
+> **Superseded — see the table at the top.** Two changes to what shipped: the announcement is a
+> bare `print(..., file=sys.stderr)`, not `_LOG.warning` (a consumer's logging config can delete a
+> record, which would falsify "its absence means validation is on"), and it is a `@staticmethod` —
+> it never uses `cls`, so as written a subclass calling `.disabled()` silently gets a base-class
+> no-op. The tests that follow assert on `capsys`, not `caplog`.
 
 ```python
     @classmethod
@@ -939,6 +971,23 @@ git commit -m "test(R9): prove the public surface is sufficient and FieldDiff is
 ---
 
 ### Task 7: T1 — install over the real git-ref path into a clean venv
+
+> **Superseded — the venv recipe below is known not to work. Read `tests/test_distribution.py`
+> instead; it is canonical.**
+>
+> `venv --system-site-packages` exposes the **base interpreter's** site-packages, not the outer
+> venv's. When the suite itself runs inside a venv — the normal case, and always true in CI — the
+> deps are invisible and the probe dies on `ModuleNotFoundError: No module named 'pandera'` before
+> it can check anything.
+>
+> What shipped names the running interpreter's `purelib` through a `.pth`, and that difference is
+> load-bearing beyond merely working: a `.pth` **appends** where `PYTHONPATH` **prepends**, and the
+> outer env holds an editable-install `contract_core` shim that a prepend would have silently
+> shadowed the package under test with. Two later changes from review: the URL is built with
+> `REPO.as_uri()` (an f-string breaks on a checkout path containing a space or `#`), and the install
+> passes `--no-build-isolation` against hatchling from the `dev` extra, so a cold pip cache no
+> longer fetches the build backend from PyPI and a PyPI blip cannot redden CI. Verified passing with
+> `PIP_NO_INDEX=1`.
 
 The distribution model ships **no wheel**, so T1 must not test one. It installs the way a consumer
 does — a PEP 508 git ref that pip resolves and **builds from source** — using a local `file://`
