@@ -1,9 +1,15 @@
 # Value constraints — declarative, portable, at the boundary
 
-**Status:** designed 2026-07-21, unimplemented.
+**Status:** designed 2026-07-21, **revised 2026-07-21 after review**, unimplemented.
 **Closes:** most of §15 item 4 (the value-check enrichment gap). Narrows what remains of it.
 **Parent spec:** [2026-07-16-data-contract-system-design.md](2026-07-16-data-contract-system-design.md)
-— read decision #1 (Portable Core), decision #2 (inputs open / outputs complete), §4.1 and §5.2.
+— read decision #1 (Portable Core), decision #2 (inputs open / outputs complete), §4.1, §5.2, §9.
+
+> **Revision note.** The first draft's intent survived review; five of its mechanical claims did not.
+> They are corrected here and marked *(rev.)* where the correction changes what an implementer does.
+> The pattern in all five: the design asserted how a library or this codebase behaves without running
+> it. Every behavioral claim below has now been executed. Where one still rests on a dependency's
+> default, it says so and pins it explicitly.
 
 ## 1. The problem
 
@@ -18,36 +24,44 @@ values are silent.
 ## 2. Scope
 
 **Ships:** four declarative constraints — `enum`, `minimum`, `maximum`, `min_length` — authored on a
-field, compiled to **both** Pandera and JSON Schema, enforced through the existing mode ladder.
+field, compiled to **all three** targets (Pandera, JSON Schema, ODCS), enforced through the existing
+mode ladder.
+
+**Also ships, because the feature is incoherent without them:**
+
+- An **aggregation step** in `_validate_tabular` (§5.2.1). The current per-row append plus last-wins
+  de-dup cannot express "3 of 10000 rows" and silently discards diffs when a field violates more than
+  one thing.
+- A **`lint` fix** (§4.1.1). Today `lint` cannot see the authoring errors this design relies on it to
+  catch.
 
 **Deferred:** the Python-side hook for cross-field checks and custom validators. It has no caller
-today. An extension point designed against hypothetical needs is an extension point shaped wrong, and
-this one would be public surface. §15 item 4 stays open, narrowed to just that hook.
+today. An extension point designed against hypothetical needs is shaped wrong, and this one would be
+public surface. §15 item 4 stays open, narrowed to just that hook.
 
 **Unchanged:** `coerce=False` and the R8 family check. Nothing here mutates data to make it pass.
 
-The four constraints are exactly what §15 item 4's four named examples require. That is the reason
-the list is four long and not longer.
+## 3. Amendment to decision #1 (Portable Core) *(rev.)*
 
-## 3. Amendment to decision #1 (Portable Core)
+Decision #1 already lists **enums** in the portable structural core, in both places it states the
+principle. The first draft claimed to be moving them; it was not. What actually moves is
+`minimum` / `maximum` / `min_length`.
 
-The principle stands; its boundary moves.
-
-Decision #1 currently groups "ranges, regex, cross-column checks, custom validators" as non-portable,
-on the grounds that they cannot be pushed into a cross-language schema. That is true of the last two
-and false of the first two: `minimum`, `maximum`, `minLength`, `enum`, and `pattern` are all standard
-JSON Schema 2020-12, and Ajv validates them.
+Decision #1 groups "ranges, regex, cross-column checks, custom validators" as non-portable on the
+grounds that they cannot be pushed into a cross-language schema. That is true of the last two and
+false of the first two: `minimum`, `maximum`, and `minLength` are standard JSON Schema 2020-12, Ajv
+validates them, and ODCS v3.1.0 expresses them under `logicalTypeOptions` (§5.4).
 
 The line as it should read:
 
-- **Portable — part of the shared contract.** Presence, type, nullability, and the value constraints
-  a JSON Schema can express. These compile to both targets, so `compat` reasons over them and the JS
-  SDK (R6) enforces them.
+- **Portable — part of the shared contract.** Presence, type, nullability, enums, and the numeric and
+  length bounds a JSON Schema can express.
 - **Not portable — Python-side local enrichment.** Cross-field and cross-column relationships, and
   custom validators. These cannot cross the language boundary. This is the principle's real content.
 
-Leaving ranges on the non-portable side would mean every consuming repo re-authors "sentiment is
-between -1 and 1" in Python, and the JS SDK validates less than the schema actually knows.
+`pattern` belongs on the portable side of that line by the same argument. It is **not shipped here**
+(§2) — portability and scope are separate questions, and nothing in the four driving examples needs
+it.
 
 ## 4. Authored format
 
@@ -55,9 +69,9 @@ Constraints are optional keys on a field. Every existing schema stays valid; thi
 format level.
 
 ```yaml
-# schemas/peec/prompts_export/1.1.0.yaml
+# schemas/peec/prompts_export/2.0.0.yaml
 schema: peec.prompts_export
-version: 1.1.0
+version: 2.0.0
 kind: tabular
 fields:
   - name: sentiment
@@ -75,33 +89,82 @@ fields:
     min_length: 1
 ```
 
-**Schemas are immutable (§4.1), so adding a constraint is a new schema version.** A consumer pinned
-to `1.0.0` is unaffected until it moves the pin — which is the point of pinning, and means this
-change cannot break a running system by itself.
+### 4.1 Applicability *(rev.)*
 
-### 4.1 Applicability, enforced at load
-
-A constraint on a type that cannot carry it is an authoring error, and it fails at
-`Schema.from_yaml` — so `contract lint` rejects it, not production:
-
-| Constraint | Valid on | Rejected because |
-| --- | --- | --- |
-| `minimum`, `maximum` | `int`, `float` | a bound on a string has no defined meaning here |
-| `min_length` | `string` | ditto, inverted |
-| `enum` | any type | — |
+| Constraint | Valid on | Deferred for | Real reason |
+| --- | --- | --- | --- |
+| `minimum`, `maximum` | `int`, `float` | `date`, `datetime` | A date range is meaningful — it needs the cross-target encoding decision below, not a claim that it is meaningless. |
+| `min_length` | `string` | — | — |
+| `enum` | `string`, `int`, `bool` | `date`, `datetime`, `float` | **The targets disagree.** JSON Schema sees a date as an ISO string (`types.py`); pandas sees a `Timestamp`. Verified: `pd.Series([Timestamp("2026-01-01")]).isin(["2026-01-01"])` is `False`. A schema that passes one target and fails the other is worse than an unsupported feature. `float` is excluded because an enum over floats is exact equality. |
 
 `enum` additionally requires a non-empty list whose values match the declared type. `enum: ["0", "1"]`
-on an `int` field is accepted by a naive implementation and then matches **nothing**, failing every
-row while looking like a data problem. Catching it at authoring time is the difference between a lint
-error and an outage.
+on an `int` field matches **nothing**, failing every row while looking like a data problem.
 
-### 4.2 Nulls
+Supporting dates means first deciding a single wire encoding for constraint literals across all three
+targets. That is a real design task, not an oversight, and it is deferred (§10).
 
-**Value constraints apply only to non-null values.** `nullable` remains the sole null gate.
+#### 4.1.1 `lint` cannot catch these today — so this design fixes it *(rev.)*
 
-This mirrors the split `dtype_satisfies` already makes for R8 and keeps one question in one place: a
-null in a nullable field is legal, and asking whether `None >= 1` is a category error. A null in a
-*non*-nullable field already fails, as the `nullable` problem, before any constraint is consulted.
+The first draft said applicability errors "fail at `Schema.from_yaml`, so `contract lint` rejects
+it." Both halves are wrong:
+
+- `lint` resolves only schemas **referenced by the contract** it was given (`cli.py`). A new or
+  not-yet-referenced schema file is never loaded, so a malformed constraint in it is never seen.
+- `lint`'s `try/except` catches only `SchemaNotFound`. A pydantic `ValidationError` escapes as a raw
+  traceback rather than the `LINT FAILED` report.
+
+And in production the failure lands at **decoration time** — `_decorator` resolves the schema when
+the decorator is applied, which is module import. An authoring typo therefore crashes at import: the
+exact failure class R9 and §15 item 7 spent effort removing.
+
+So this design includes a scoped `lint` change: walk and validate **every** schema file under the
+given schema dirs, not only referenced ones, and catch `ValidationError` into the `LINT FAILED`
+report alongside `SchemaNotFound`.
+
+Residual, stated rather than hidden: `lint` in CI is the control. A repo that skips `lint` still gets
+an import-time crash from a malformed constraint. Making resolution lazy is a larger change and is
+out of scope here.
+
+### 4.2 Nulls *(rev.)*
+
+**Value constraints apply only to non-null values.** `nullable` remains the sole null gate — the same
+split `dtype_satisfies` makes for R8.
+
+This works because `pa.Check(...)` defaults `ignore_na=True`. Verified. **Every check this design
+emits sets `ignore_na=True` explicitly anyway.** A guarantee the spec makes to consumers should not
+rest on an unstated default of a pinned dependency that a bump could change; writing it costs
+nothing.
+
+### 4.3 Rollout and versioning — adding a constraint is a **major** bump *(rev.)*
+
+The first draft claimed a consumer "pinned to `1.0.0` is unaffected… this change cannot break a
+running system by itself." That is false under this project's own recommended pinning:
+
+- The parent spec's strategy is **major-pin plus lockfile** (`@1`); `tests/fixtures/contract.yaml`
+  pins `@1`.
+- `Resolver` resolves `@1` to the **highest matching minor** — `max(candidates)`.
+- **There is no lockfile implementation anywhere in the repo.** It is designed (§9) and unbuilt.
+
+So publishing `1.1.0` with `minimum: -1.0` would hard-fail a running consumer on its next resolve,
+with no action on its part. The reassurance was written against a pinning mode nobody was told to
+use.
+
+**Policy: adding, tightening, or removing a value constraint is a breaking schema change and requires
+a major version bump.** A constraint can fail data that previously passed, which is the definition of
+breaking. §9 already makes major the staged-migration mechanism — "consumers adopt a new major on
+their own timeline" — and under `@1` pinning a major bump genuinely does leave existing consumers
+untouched, which is what the first draft wrongly claimed for a minor.
+
+**This is policy, not machinery, until Phase 2.** The CI check that fails a mis-declared bump is
+Phase 2 (§9) and does not exist. Until it does, nothing mechanically stops someone publishing
+constraints in a minor and breaking every `@1` consumer at once. Say so in the authoring skill
+(§5.5).
+
+**Per-boundary rollout.** A schema author cannot know every consumer's data. The intended sequence
+for adopting a constraint-bearing major is the mode ladder that already exists: move the pin with the
+boundary in `observe`, read the event log, then promote to `enforce`. This is also the answer to the
+severity objection in §8 — the ladder is per-boundary, so a consumer soaks value constraints without
+weakening structural enforcement anywhere else.
 
 ## 5. Compilation
 
@@ -122,102 +185,210 @@ would therefore reject `null`, contradicting its own `nullable: true`.
 So the compiler appends `None` to the enum when the field is nullable. Without it, `nullable` +
 `enum` is silently broken in a way that looks like bad data.
 
-### 5.2 Pandera
+### 5.2 Pandera — the classifier keys on `error=`, not `name=` *(rev.)*
 
-Each constraint compiles to a named `pa.Check` appended to the column's existing R8 family check:
-`enum` → `isin`, `minimum` → `ge`, `maximum` → `le`, `min_length` → a length check that skips nulls
-(per §4.2).
+Each constraint compiles to a `pa.Check` appended to the column's existing R8 family check:
+`enum` → `isin`, `minimum` → `ge`, `maximum` → `le`, `min_length` → a length check, all with
+`ignore_na=True` (§4.2).
 
-**Every check carries an explicit name** (`enum`, `minimum`, `maximum`, `min_length`). This is
-load-bearing, not tidiness: `_validate_tabular` classifies failures by check name, and its `else`
-branch labels anything unrecognized `retyped`. Unnamed value checks would report "sentiment is out of
-range" as **a type change** — a wrong diagnosis pointing at the wrong upstream cause.
+The first draft said each check must carry an explicit **`name=`**, and called it load-bearing. It is
+load-bearing and `name=` does not deliver it. Verified against pandera 0.32.1: the `check` column of
+`failure_cases` is populated from **`check.error`**, falling back to the check's rendered form.
 
-That classifier is §15 item 5c's known-fragile internals-parsing. This change adds to it rather than
-fixing it; item 5c stays open and this is one more reason to do it.
+```
+pa.Check.isin([0, 1], name="enum")                  ->  check == "isin([0, 1])"
+pa.Check(fn, name="minimum", error="minimum")       ->  check == "minimum"
+```
 
-### 5.3 Payload boundaries
+`name=` does surface for a bare `pa.Check(fn, name=...)`, but not for the built-in constructors this
+design uses. **So every check sets `error="<constraint>"`.** Implemented with `name=`, every value
+violation falls through to the `else` at `runtime.py` and is reported as `retyped` — the precise
+misdiagnosis this section exists to prevent.
+
+This is already observable in shipped code: `_family_check` sets both a `name=` and a prose `error=`,
+and the prose is what reaches the classifier — which is why dtype failures land in the `else` today.
+They are labelled `retyped`, which happens to be correct for a dtype failure, so nothing looked
+broken.
+
+**This makes §15 item 5c worse, and that should be said out loud.** Control flow is now keyed on a
+string slot that pandera fills from an error-*message* field, under a pinned dependency, with no
+compile-time guarantee. A pandera bump that changes how `failure_cases` is populated silently
+re-labels every value violation. Item 5c stays open and this design raises its priority; a proper fix
+carries checks' identity out-of-band rather than parsing it back out.
+
+#### 5.2.1 Aggregation — the current loop cannot produce §6.2 *(rev.)*
+
+`_validate_tabular` appends **one `FieldDiff` per failure-case row**, then de-dups per field with
+`seen[d.field] = d` — **last wins**. Two consequences the first draft missed:
+
+1. "3 of 10000 rows violate" cannot come out of that loop at all. It needs a **group-by
+   `(field, check)`** that the draft never mentioned.
+2. Last-wins **discards diffs**. A field violating both `minimum` and `maximum`, or violating a value
+   check *and* the dtype family check, reports one arbitrary problem chosen by pandera's frame
+   ordering. Confirmed in review: with the dtype row sorted after the value row, the value diff is
+   the one thrown away.
+
+So this design replaces the de-dup with aggregation:
+
+- Group failure cases by `(field, check)`; emit **one** `FieldDiff` per group, carrying the row count
+  and up to three sample values.
+- **Structural diffs keep collapsing per field** — "column missing" twice is noise. **Value diffs do
+  not collapse across different constraints**, because `minimum` and `maximum` on one field are two
+  distinct facts an operator needs.
+- When a field has both a dtype-family failure and a value failure, the **dtype diff wins and the
+  value diffs are dropped** — deliberately, and it must be a documented rule rather than an ordering
+  accident. A column of the wrong type will fail every value check on it, and reporting "sentiment is
+  a string" *and* "sentiment violates maximum=1.0" buries the cause under its own consequence.
+
+### 5.3 Payload boundaries — the branch is built *(rev.)*
 
 `_validate_payload` branches on `required`, `type`, and `additionalProperties`. A `minimum` or `enum`
-error from `jsonschema` matches **none** of them and is dropped on the floor — the loop simply does
-not append a diff.
+error from `jsonschema` matches none of them and is dropped on the floor.
 
-So payload boundaries need a new branch, or constraints compile into the JSON Schema and then do
-nothing at runtime for `kind: payload`. A constraint that validates on one boundary kind and silently
-no-ops on the other is worse than one that does not exist.
+The first draft stated this fork and never picked a side, then wrote a test criterion assuming one.
+**Decision: build the branch.** Constraints compile into the JSON Schema for `kind: payload`, and
+`_validate_payload` gains a branch mapping `enum` / `minimum` / `maximum` / `minLength` validator
+errors to a `value` diff.
+
+Payload errors are per-document, not per-row, so `violating_rows` is `None` there and the sample is
+the offending value. A constraint that enforces on tabular boundaries and silently no-ops on payload
+ones is worse than one that does not exist.
+
+### 5.4 ODCS — the third target *(rev.)*
+
+`compile/odcs.py` exists and `contract lint` compiles to ODCS and validates it, so ODCS is a real
+target the first draft never mentioned. `_schema_block` emits `name` / `logicalType` / `required`
+only — it drops `nullable` today, and would drop every constraint.
+
+That matters more than the other two: the ODCS document is the artifact that actually **leaves the
+Python process**. §3 cannot claim portability while the exported artifact carries none of it.
+
+The vendored ODCS v3.1.0 schema supports these under **`logicalTypeOptions`** — it defines
+`minimum`, `maximum`, `minLength`, `exclusiveMinimum`, and `pattern`. So `_schema_block` gains a
+`logicalTypeOptions` block per constrained field.
+
+Out of scope, named so it is a decision: ODCS's `nullable` omission is a **pre-existing** gap, not
+introduced here, and is not fixed by this design.
 
 ## 6. Runtime semantics
 
 ### 6.1 Severity
 
 Value violations are **hard** diffs, joining `missing` / `retyped` / `nullable`. They flow through
-the existing `observe` → `warn` → `enforce` ladder with no new knob: `enforce` raises, `warn` logs,
-`observe` records.
+the existing `observe` → `warn` → `enforce` ladder with no new knob.
 
 Hard on **inputs and outputs alike**. Decision #2's open/complete asymmetry is about *extra fields*,
-not about values. A vendor sending `sentiment: 1.4` is exactly incident-#1 shaped — it is the case
-the system exists to catch.
+not values. A vendor sending `sentiment: 1.4` is exactly incident-#1 shaped.
 
-### 6.2 Reporting
+The operational consequence is owned in §4.3 and §8, not waved away: one bad row in ten thousand
+stops the batch as hard as a vanished column, and the rollout answer is to adopt a
+constraint-bearing major with the boundary in `observe` first.
 
-A new `FieldDiff.problem` variant, `"value"`. The model's *fields* are unchanged:
+### 6.2 Reporting — typed fields, not prose *(rev.)*
+
+The first draft put `"maximum=1.0"` in `expected` and `"3 of 10000 rows violate (e.g. 1.4, …)"` in
+`observed`. That silently repurposes two fields whose current meanings are asserted by
+`test_public_api.py`, and it forces a consumer to regex prose to recover a number — from the very
+type `FieldDiff` exists to spare them.
+
+The four existing fields keep their meanings. Three optional fields carry the value story:
+
+```python
+class FieldDiff(BaseModel):
+    field: str
+    expected: str                    # unchanged: the declared type
+    observed: str                    # unchanged: the observed dtype / state
+    problem: Literal["missing", "retyped", "nullable", "extra", "value"]
+    constraint: str | None = None    # "maximum=1.0", "enum=[0, 1]"
+    violating_rows: int | None = None
+    samples: list[str] = []
+```
+
+`None` / `[]` on every structural diff. Rendered:
 
 ```
-peec.prompts_export@1.0.0 at input 'prompts':
-  value field 'sentiment' expected maximum=1.0,
-  observed 3 of 10000 rows violate (e.g. 1.4, 2.7, 1.02)
+peec.prompts_export@2.0.0 at input 'prompts':
+  value field 'sentiment' violates maximum=1.0
+  — 3 of 10000 rows (e.g. 1.4, 2.7, 1.02)
 ```
 
-Row-level failures need a count and exemplars where column-level failures need neither. Pandera's
-`failure_cases` yields one row per offending value with its index, so both are available; samples cap
-at three, because the fourth exemplar tells the reader nothing the third did not.
+Samples cap at three. They are drawn from production data, so the authoring skill should note that a
+constrained field holding sensitive values will have examples surface in logs and exception messages.
 
-## 7. Public API and versioning
+## 7. Public API, versioning, and the three edit sites *(rev.)*
 
-`FieldDiff` is on the frozen public surface (R9 §3.2). Adding a `problem` variant is a **deliberate
-public-API change**:
+`FieldDiff` is on the frozen public surface (R9 §3.2). This is a deliberate public change:
 
-- Version → **`0.2.0`**. Legitimate under 0.x, where a minor may break.
-- `tests/test_public_api.py`'s frozen-surface test is updated *as part of the change*, which is the
-  tripwire working as designed — a reviewed break, not a silent one.
-- `CHANGELOG.md` gets the entry, and it must say plainly that a consumer matching exhaustively on
-  `problem` will now see a value it has never seen.
+- Version → **`0.2.0`**. Legitimate under 0.x.
+- `tests/test_public_api.py`'s frozen-surface test is updated **as part of the change** — the
+  tripwire working as designed, a reviewed break rather than a silent one.
+- `CHANGELOG.md` must say two things, not one: a consumer matching exhaustively on `problem` will see
+  a value it has never seen, **and** `FieldDiff` has gained three fields.
+
+**`problem` is declared in two places and gated in a third.** All three must change together:
+
+| Site | What |
+| --- | --- |
+| `runtime.py` | `Problem = Literal[...]` |
+| `errors.py` | `FieldDiff.problem: Literal[...]` |
+| `runtime.py` | `hard = [d for d in diffs if d.problem in (...)]` — a hardcoded tuple |
+
+The duplication is pre-existing. Adding a fifth variant makes a divergence between the two `Literal`s
+possible for the first time in a way mypy will not necessarily catch at the append site. Collapsing
+them to one definition is a small, in-scope cleanup and this design does it.
 
 ## 8. Considered and rejected
 
 | Option | Why not |
 | --- | --- |
-| Honor decision #1 literally — all value checks Python-side | Every repo re-authors the same range in code, and the JS SDK stays blind to constraints the schema knows. The principle's justification does not apply to keywords JSON Schema has. |
-| Per-check severity (`on_violation: warn\|fail`) | A second severity axis beside the mode ladder. Two interacting knobs is how a kill switch becomes ambiguous — the `CONTRACT_DISABLED` lesson, one layer up. |
-| Row-fraction threshold ("fail above 2%") | Adds a tuning constant with no principled value. "How did we choose 2%?" has no answer, and an unanswerable knob gets set to whatever silences the alert. |
-| Value violations always `warn` | The failure this exists to fix *is* silence. The spec already notes (§5.2) that a non-blocking log line is the easiest thing in this system to ignore. |
-| `pattern` / regex now | Not required by any of the four driving examples. Purely additive later, on the same mechanism. |
+| Honor decision #1 literally — all value checks Python-side | Every repo re-authors the same range in code, and the JS SDK and ODCS export stay blind to constraints the schema knows. The justification does not apply to keywords JSON Schema and ODCS both have. |
+| Per-check severity (`on_violation: warn\|fail`) | A second severity axis beside the mode ladder. Two interacting knobs is how a kill switch becomes ambiguous — the `CONTRACT_DISABLED` lesson one layer up. **The cost is real:** `mode` is per-boundary, so "structural enforce + value warn" on one boundary is unavailable. §4.3's observe-then-promote rollout is the answer, and it is weaker than per-check severity would have been. Accepted knowingly. |
+| Row-fraction threshold ("fail above 2%") | A tuning constant with no principled value. An unanswerable knob gets set to whatever silences the alert. |
+| Value violations always `warn` | The failure this exists to fix *is* silence. §5.2 of the parent spec already notes a non-blocking log line is the easiest thing here to ignore. |
+| Prose count/samples in `observed` | Finding 6. Breaks the field's asserted meaning and makes consumers regex a number out of a sentence. |
+| `name=` on pandera checks | Verified not to reach the classifier for the built-in constructors. §5.2. |
+| Publishing constraints in a **minor** schema bump | Finding 4. `@1` + `max(candidates)` + no lockfile means it breaks running consumers on their next resolve. |
+| Declaring the ODCS export structural-only | ODCS v3.1.0 expresses these under `logicalTypeOptions`, so the exclusion would be a choice to make §3 false for the exported artifact. |
+| `pattern` / regex now | Portable (§3), but not required by any driving example. Additive later on the same mechanism. |
 | Exclusive bounds (`exclusiveMinimum`) | Inclusive bounds express all four examples. Additive later. |
 | The Python cross-field hook now | No caller. Its shape would be guessed, and it would be public surface. |
-| `coerce=True` to normalize values | Never. It hides the drift criterion #1 exists to catch — the same reason R8 rejected it. |
+| `coerce=True` to normalize values | Never. It hides the drift criterion #1 exists to catch — R8's reason. |
 
-## 9. Falsifiable criteria
+## 9. Falsifiable criteria *(rev.)*
 
 Each constraint needs a **true positive and a true negative**. A check that always fires passes any
 one-directional test, which is how a vacuous validator ships green.
 
-1. **Per constraint, violation hard-fails** under `enforce`, naming the field, the constraint, the
-   violating-row count, and sample values.
+1. **Per constraint, violation hard-fails** under `enforce`, naming field, constraint, row count, and
+   samples.
 2. **Per constraint, conforming data passes.** The true negative.
 3. **Nulls in a nullable field do not trip constraints** (§4.2).
-4. **`nullable` + `enum` accepts `null`** — the §5.1 gotcha, which fails without the appended `None`.
-5. **A value failure reports `problem="value"`,** not `"retyped"` — the §5.2 naming, which fails
-   against an unnamed check.
-6. **`minimum` on a `string` field fails at schema load,** not at validation time (§4.1).
-7. **`enum` whose values mismatch the declared type fails at load** (§4.1).
-8. **An enum violation on a `kind: payload` boundary raises** rather than vanishing (§5.3).
-9. **The compiled JSON Schema carries the keywords** — the portability claim of §3, asserted rather
-   than assumed.
+4. **`nullable` + `enum` accepts `null`** — fails without the appended `None` (§5.1).
+5. **A value failure reports `problem="value"`, not `"retyped"`** — fails if the check is built with
+   `name=` instead of `error=` (§5.2). *This test is the guard on the whole classification story.*
+6. **A field violating two constraints at once reports both diffs** — fails against the current
+   last-wins de-dup (§5.2.1).
+7. **A field failing both its dtype check and a value check reports the dtype diff only**, by the
+   documented rule and not by frame ordering (§5.2.1).
+8. **`violating_rows` and `samples` are populated and typed** — an integer, not a substring of prose
+   (§6.2).
+9. **`minimum` on a `string` field fails at schema load** (§4.1).
+10. **`enum` whose values mismatch the declared type fails at load** (§4.1).
+11. **`lint` reports a malformed constraint as `LINT FAILED`**, in an unreferenced schema file, and
+    does not raise a traceback (§4.1.1).
+12. **An enum violation on a `kind: payload` boundary raises** rather than vanishing (§5.3).
+13. **The compiled JSON Schema carries the keywords** (§3/§5.1).
+14. **The compiled ODCS document carries `logicalTypeOptions`** and still validates against the
+    vendored v3.1.0 schema (§5.4).
 
 ## 10. Deliberately not built
 
 - **Cross-field and custom-validator checks.** §15 item 4 remains open for exactly this.
-- **`pattern`, exclusive bounds, `maxLength`, `multipleOf`.** Additive on this mechanism when a real
-  case appears.
-- **Fixing §15 item 5c** (classification by parsing library internals). §5.2 leans on it harder; it
-  is not repaired here.
+- **Constraints on `date` / `datetime`.** Needs one wire encoding for constraint literals agreed
+  across Pandera, JSON Schema, and ODCS first (§4.1).
+- **`enum` on `float`.** Exact float equality.
+- **`pattern`, exclusive bounds, `maxLength`, `multipleOf`.** Additive when a real case appears.
+- **Fixing §15 item 5c** (classification by parsing library internals). §5.2 leans on it harder and
+  raises its priority; it is not repaired here.
+- **ODCS `nullable`.** Pre-existing gap (§5.4).
+- **Lazy schema resolution.** Would remove the residual import-time crash in §4.1.1.
