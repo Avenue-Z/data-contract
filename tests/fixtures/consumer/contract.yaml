@@ -1,0 +1,19 @@
+# tests/fixtures/consumer/contract.yaml
+# A raw -> input -> output contract used by the R9 public-API and degradation tests.
+system: demo-consumer
+version: 1.0.0
+raw:
+  - name: prompts_raw
+    schema: peec.prompts_export@1.0.0
+    source: {kind: file, format: csv}
+    mode: enforce
+inputs:
+  - name: prompts
+    schema: peec.prompts_export@1.0.0
+    source: {kind: file, format: csv}
+    mode: enforce
+outputs:
+  - name: report
+    schema: aivx.report@1.0.0
+    sink: {kind: file, format: json}
+    mode: enforce

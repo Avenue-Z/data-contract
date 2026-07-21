@@ -1,0 +1,7 @@
+# tests/fixtures/contract_broken.yaml
+system: demo
+version: 1.0.0
+inputs:
+  - name: prompts
+    schema: peec.nonexistent@1
+    source: {kind: file, format: csv}

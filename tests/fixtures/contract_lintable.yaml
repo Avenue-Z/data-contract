@@ -1,0 +1,7 @@
+# tests/fixtures/contract_lintable.yaml
+system: demo
+version: 1.0.0
+inputs:
+  - name: prompts
+    schema: peec.prompts_export@1.0.0
+    source: {kind: file, format: csv}
