@@ -1,0 +1,20 @@
+# tests/fixtures/schemas/peec/prompts_export/1.0.0.yaml
+schema: peec.prompts_export
+version: 1.0.0
+kind: tabular
+fields:
+  - name: prompt
+    type: string
+    required: true
+  - name: sentiment
+    type: float
+    required: true
+    nullable: true
+  - name: position
+    type: int
+    required: true
+    nullable: true
+  - name: share_of_voice
+    type: float
+    required: true
+    nullable: true

@@ -1,0 +1,18 @@
+# tests/fixtures/contract.yaml
+system: aivx-reports
+version: 1.0.0
+raw:
+  - name: peec_prompts_raw
+    schema: peec.prompts_raw@1
+    source: {kind: file, format: csv}
+    mode: enforce
+inputs:
+  - name: peec_prompts
+    schema: peec.prompts_export@1
+    source: {kind: file, format: csv}
+    mode: enforce
+outputs:
+  - name: report_payload
+    schema: aivx.report@1
+    sink: {kind: file, format: json}
+    mode: enforce

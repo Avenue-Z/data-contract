@@ -43,6 +43,8 @@ on both stacks. (The Python template also ships it in its `dev` extras, so
 - `docs/superpowers/plans/` — implementation plans
 - `docs/superpowers/handoffs/` — volatile state: in-flight work, open branches, "as of" notes.
   This is where it goes, NOT in `CLAUDE.md`.
+- `docs/consuming-repo-setup.md` — installing and using `contract-core` from another repo
+- `CHANGELOG.md` — release notes; read before moving a pinned version
 - `docs/notes/` — dated working notes
 - `CONTRIBUTING.md` — branch flow. **Never push directly to `main`.**
 

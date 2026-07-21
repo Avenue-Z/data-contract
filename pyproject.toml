@@ -3,20 +3,38 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "app"
+name = "contract-core"
 version = "0.1.0"
-description = "TODO"
-requires-python = ">=3.11"
-dependencies = []
+description = "Data contract core library — schemas, contracts, compilers, runtime validation."
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic~=2.13",
+    "pandera~=0.32.1",
+    "pandas>=2.0.0",
+    "jsonschema>=4.20",
+    "pyyaml>=6.0",
+    "click>=8.1",
+]
 
 [project.optional-dependencies]
 # pre-commit is here because README's Setup step runs `pre-commit install` — the step that
 # installs the gitleaks hook, i.e. the one local security control. Without it in dev, a new
 # engineer following Setup verbatim gets `command not found` on exactly that line.
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8"]
+#
+# hatchling is the build backend, normally supplied by pip's build isolation. It is here
+# because tests/test_distribution.py installs with --no-build-isolation, so the backend has
+# to already exist in the environment — that is what keeps the install test off PyPI.
+dev = ["pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8",
+       "hatchling", "pandas-stubs", "types-jsonschema", "types-PyYAML"]
+
+[project.scripts]
+contract = "contract_core.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/app"]
+packages = ["src/contract_core"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/contract_core/vendor/odcs-json-schema-v3.1.0-20260505.json" = "contract_core/vendor/odcs-json-schema-v3.1.0-20260505.json"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -28,13 +46,13 @@ addopts = "--strict-config --strict-markers"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 files = ["src"]
 
