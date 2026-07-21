@@ -51,6 +51,23 @@ class ContractRuntime:
         self.event_log = event_log or EventLog()
         self.clock = clock or _default_clock
 
+    @classmethod
+    def disabled(cls, label: str | None = None) -> "ContractRuntime":
+        """Return a no-op runtime and announce it once, loudly, on stderr.
+
+        Turning validation off is itself a loud act (R9 design §3.3): "why is nothing
+        validating?" must be diagnosable from a positive signal, not inferred from the
+        absence of failures. Deliberately a log warning and NOT an event-log write — an
+        event write is file I/O that can itself fail, reintroducing exactly the import-time
+        crash graceful degradation exists to prevent.
+
+        `label` is a best-available identifier (the factory passes the contract path). A
+        disabled runtime reads no files, so it can never learn the contract's `system` name.
+        """
+        trigger = "CONTRACT_DISABLED set" if _env_disabled() else "explicitly disabled"
+        _LOG.warning("contract validation DISABLED (%s) [%s]", trigger, label or "unspecified")
+        return _DisabledRuntime()
+
     def _spec(self, direction: str, name: str) -> BoundarySpec:
         group = {"raw": self.contract.raw, "input": self.contract.inputs,
                  "output": self.contract.outputs}[direction]
@@ -189,3 +206,29 @@ class ContractRuntime:
                                                observed=type(payload[k]).__name__,
                                                problem="extra"))
         return diffs, observed
+
+
+def _passthrough(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """The identity decorator: no wrapper, no validation, no events, no overhead."""
+    return fn
+
+
+class _DisabledRuntime(ContractRuntime):
+    """Every boundary is a pass-through. Reachable only via `ContractRuntime.disabled()`.
+
+    It deliberately does not call `ContractRuntime.__init__`: a disabled runtime has no
+    contract and no resolver, and *acquiring* them is the file I/O this class exists to
+    avoid. Touching `.contract` or `.resolver` on one is an error, by construction.
+    """
+
+    def __init__(self) -> None:
+        pass
+
+    def raw(self, name: str) -> Decorator:
+        return _passthrough
+
+    def input(self, name: str) -> Decorator:
+        return _passthrough
+
+    def output(self, name: str) -> Decorator:
+        return _passthrough
