@@ -52,14 +52,17 @@ Every task inherits these. Values are copied verbatim from the design and the re
 - **"Off always wins" (§3.3).** Disabled iff `CONTRACT_DISABLED` is on **OR** `enabled=False`. There
   is deliberately **no** way for application code to force validation on over the env var.
 - **`CONTRACT_DISABLED` is on iff present and its value, stripped and lowercased, is not in
-  `{"", "0", "false", "no"}`.** So `=1`, `=true`, `=yes`, `=on` disable; `=0`, `=false`, `=no`, `=`
-  (empty), and *unset* leave validation **enabled**. This rule lives in exactly one helper,
-  `_env_disabled()`.
+  `{"", "0", "false", "no", "off"}`.** So `=1`, `=true`, `=yes`, `=on` disable; `=0`, `=false`,
+  `=no`, `=off`, `=` (empty), and *unset* leave validation **enabled**. This rule lives in exactly
+  one helper, `_env_disabled()`. *(Corrected in place: the set originally omitted `"off"` — see the
+  superseded table. These constraints are stated as inherited by every task, so leaving the wrong
+  set here and flagging it only at the snippet would be the same defect one level up.)*
 - **A disabled runtime does no file I/O** — no contract read, no schema resolution, no event write.
-- **Disabling is loud**: exactly one `logging.warning` at construction, emitted from
+- **Disabling is loud**: exactly one line written to `sys.stderr` at construction, emitted from
   `ContractRuntime.disabled()` itself (not from `load_runtime`), naming the trigger and a best-available
   label. Never an event-log write (an event write is file I/O that can itself fail — the exact
-  import-time crash §15 item 7 exists to prevent).
+  import-time crash §15 item 7 exists to prevent), and never a `logging` record (a consumer's logging
+  config can delete one). *(Corrected in place; originally a `logging.warning`.)*
 - **No auto-degrade.** A missing or malformed contract file **raises**; it never silently disables.
 - **Version 0.1.0**, pre-1.0. Under 0.x a **minor** bump may carry breaking changes.
 - **Pandera import is namespaced:** `import pandera.pandas as pa` — never `import pandera as pa`.
@@ -91,6 +94,11 @@ contains `peec/prompts_export/1.0.0.yaml` (tabular: `prompt` str, `sentiment` fl
 ---
 
 ### Task 1: Bump to 0.1.0 and guard the two version strings against skew
+
+> **Superseded — see the table at the top.** Applies to every step below. What shipped is one test,
+> `test_version_matches_pyproject`, reading `pyproject.toml` with `tomllib`. Both tests written
+> below are gone: the literal put the version in a third place the release procedure does not name,
+> and `importlib.metadata` only agrees while the editable install is current.
 
 The version string lives in **two** places — `pyproject.toml` and `__init__.py:__version__` — and
 nothing keeps them in step. `__version__` is on the frozen public surface (§3.2), so a skew ships a
@@ -183,6 +191,12 @@ git commit -m "chore(R9): bump to 0.1.0 and guard __version__ against metadata s
 
 ### Task 2: `_env_disabled()` — pin the kill-switch activation semantics
 
+> **Superseded — see the table at the top.** Applies to every step below, tests included. `"off"` is
+> missing from both `_ENV_OFF_VALUES` and the `OFF_VALUES` fixture, so as written this task *and its
+> test* agree that `CONTRACT_DISABLED=off` disables validation. A test that shares the omission
+> cannot catch it — which is how this reached review. What shipped adds `"off"`, `"OFF"` and
+> `"  off  "` to `OFF_VALUES`.
+
 An ambiguous kill switch is an incident risk (§3.3). One private helper owns the rule so the factory
 and any other caller cannot drift apart.
 
@@ -193,7 +207,8 @@ and any other caller cannot drift apart.
 **Interfaces:**
 - Consumes: nothing.
 - Produces: `contract_core.runtime._env_disabled() -> bool` — reads `os.environ["CONTRACT_DISABLED"]`,
-  returns `True` iff present and `value.strip().lower() not in {"", "0", "false", "no"}`.
+  returns `True` iff present and `value.strip().lower() not in {"", "0", "false", "no", "off"}`.
+  *(Corrected in place; `"off"` was missing — see the superseded table.)*
 
 - [ ] **Step 1: Write the failing test**
 
@@ -289,6 +304,12 @@ git commit -m "feat(R9): pin CONTRACT_DISABLED activation semantics in _env_disa
 ---
 
 ### Task 3: `ContractRuntime.disabled()` — no-op boundaries plus one loud warning
+
+> **Superseded — see the table at the top.** Applies to every step below, tests included. The
+> announcement that shipped is `print(..., file=sys.stderr)`, not `_LOG.warning`, so every `caplog`
+> assertion written below is a `capsys` assertion in `tests/test_degradation.py`, and `disabled()`
+> is a `@staticmethod`. Step 5 below — the manual stderr check — became a real test
+> (`test_disabled_announces_even_when_logging_is_configured_away`) rather than a one-off command.
 
 The warning lives **here**, not in `load_runtime`, so a consumer calling `disabled()` directly gets
 the same signal as one going through the factory (§3.3).
@@ -466,6 +487,12 @@ Expected: PASS (22 passed).
 `caplog` proves a record was emitted; this proves the default (no handler configured) routing
 sends it to stderr via `logging.lastResort`.
 
+> **Superseded.** This step had the right instinct and the wrong conclusion. `logging.lastResort`
+> *is* why the record reaches stderr with no handler configured — which means this check passes
+> while a consumer who calls `basicConfig` gets nothing, and the consumer doc guarantees that the
+> line's absence means validation is on. What shipped writes to `sys.stderr` directly and asserts it
+> under `logging.disable(logging.CRITICAL)`, so the check is a test rather than a manual command.
+
 Run:
 ```bash
 python -c "from contract_core.runtime import ContractRuntime; ContractRuntime.disabled('x')" 2>/dev/null
@@ -489,6 +516,11 @@ git commit -m "feat(R9): add ContractRuntime.disabled() with a loud one-shot war
 ---
 
 ### Task 4: `load_runtime()` — the factory, with "off always wins" precedence
+
+> **Superseded — see the table at the top.** Applies to every step below. The `caplog` assertions
+> are `capsys` assertions in what shipped (Task 3's note says why),
+> `test_env_var_set_to_zero_does_not_disable` is parametrized over `["0", "off"]`, and the
+> `event_log_path` fixture is `autouse`.
 
 **Files:**
 - Modify: `src/contract_core/runtime.py`
@@ -687,7 +719,8 @@ def load_runtime(
     Returns a disabled runtime — no validation, no file I/O, one loud warning at
     construction — when CONTRACT_DISABLED is *on* in the environment OR when
     enabled=False. CONTRACT_DISABLED is on iff present and not in
-    {"", "0", "false", "no"} (case-insensitive); so =0 / =false leave validation ON.
+    {"", "0", "false", "no", "off"} (case-insensitive); so =0 / =false / =off leave
+    validation ON.
     "Off wins": there is no way to force validation on over the env kill switch.
     Otherwise loads the contract and resolver and returns an enforcing runtime.
     """
@@ -1184,10 +1217,15 @@ Two knobs, and **"off always wins"**:
 | neither | **enabled** (the default) |
 
 `CONTRACT_DISABLED` is **on** iff it is present *and* its value, stripped and lowercased, is not one
-of `""`, `"0"`, `"false"`, `"no"`. So:
+of `""`, `"0"`, `"false"`, `"no"`, `"off"`. So:
 
 - disables: `CONTRACT_DISABLED=1`, `=true`, `=yes`, `=on`
-- leaves validation **enabled**: `CONTRACT_DISABLED=0`, `=false`, `=no`, `=` (empty), and unset
+- leaves validation **enabled**: `CONTRACT_DISABLED=0`, `=false`, `=no`, `=off`, `=` (empty), and
+  unset
+
+*(Corrected in place; `"off"` was missing — see the superseded table. The shipped
+`docs/consuming-repo-setup.md` also spells out that these name the state of the switch, not of
+validation, and that an unrecognised value disables.)*
 
 There is deliberately **no per-call opt-*in*** that overrides the env var — that is what makes
 `CONTRACT_DISABLED` a real ops kill switch. A module hardcoding `enabled=True` cannot defeat it.
@@ -1292,6 +1330,13 @@ Expected: all pass. Then re-read §3's truth table against
 `tests/test_degradation.py::ON_VALUES`/`OFF_VALUES` and the warning string against
 `test_disabled_warns_once_naming_trigger_and_label`. If any line in the doc has no test behind it,
 either write the test or delete the claim.
+
+> **This step ran and passed while `CONTRACT_DISABLED=off` disabled validation.** That is the most
+> useful thing in this plan to learn from. The check is "doc agrees with test", and both were
+> derived from the same wrong list, so they agreed perfectly. Cross-checking two artifacts with a
+> common ancestor proves consistency, not correctness. The check that would have caught it is
+> adversarial — enumerate the values an operator might *plausibly type* and ask what each does —
+> which is what the reviewer did.
 
 - [ ] **Step 5: Run the full gate**
 
