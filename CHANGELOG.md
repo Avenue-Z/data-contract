@@ -11,7 +11,7 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
-## [0.1.0] — unreleased, pending tag
+## [0.1.0] — 2026-07-21
 
 First installable release. Before this, `contract-core` existed only as an editable local
 path, so no other repo could depend on it (risk R9).
