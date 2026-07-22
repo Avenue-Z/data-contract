@@ -3,12 +3,23 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+# The single definition. `runtime.py` imports this rather than restating it: two copies
+# of the same Literal can drift, and adding a fifth variant is when that starts to matter
+# (design §7).
+Problem = Literal["missing", "retyped", "nullable", "extra", "value"]
+
 
 class FieldDiff(BaseModel):
     field: str
     expected: str
     observed: str
-    problem: Literal["missing", "retyped", "nullable", "extra"]
+    problem: Problem
+    # Value-violation detail (design §6.2). None / empty on every structural diff.
+    # `expected` and `observed` keep their existing meanings — the declared type and the
+    # observed dtype/state — so a consumer reading them does not break.
+    constraint: str | None = None
+    violating_rows: int | None = None
+    samples: list[str] = []
 
 
 class ContractViolation(Exception):
@@ -23,8 +34,17 @@ class ContractViolation(Exception):
     def _render(self) -> str:
         lines = []
         for d in self.diffs:
-            lines.append(
-                f"{self.schema_ref} at {self.direction} '{self.boundary}': "
-                f"{d.problem} field '{d.field}' expected {d.expected}, observed {d.observed}"
-            )
+            head = f"{self.schema_ref} at {self.direction} '{self.boundary}': "
+            if d.problem == "value":
+                detail = f"value field '{d.field}' violates {d.constraint}"
+                if d.violating_rows is not None:
+                    detail += f" — {d.violating_rows} rows"
+                if d.samples:
+                    detail += f" (e.g. {', '.join(d.samples)})"
+                lines.append(head + detail)
+            else:
+                lines.append(
+                    head + f"{d.problem} field '{d.field}' "
+                    f"expected {d.expected}, observed {d.observed}"
+                )
         return "\n".join(lines)

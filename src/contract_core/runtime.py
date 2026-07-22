@@ -4,7 +4,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pandas as pd
 import pandera.pandas as pa
@@ -12,14 +12,13 @@ import pandera.pandas as pa
 from contract_core.compile.jsonschema_compile import to_json_schema
 from contract_core.compile.pandera_compile import to_pandera
 from contract_core.contract import BoundarySpec, Contract
-from contract_core.errors import ContractViolation, FieldDiff
+from contract_core.errors import ContractViolation, FieldDiff, Problem
 from contract_core.events import EventLog, Result
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
 
 # A boundary decorator: wraps a data-producing function, validating its return value.
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
-Problem = Literal["missing", "retyped", "nullable", "extra"]
 
 # `CONTRACT_DISABLED` is an ops kill switch, so its activation rule is pinned, not "truthy"
 # (R9 design §3.3): typing `0`/`false`/`off` must turn the switch OFF, not disable every contract.
@@ -115,7 +114,7 @@ class ContractRuntime:
         else:
             diffs, observed = self._validate_payload(resolved, data, is_output)
 
-        hard = [d for d in diffs if d.problem in ("missing", "retyped", "nullable")]
+        hard = [d for d in diffs if d.problem in ("missing", "retyped", "nullable", "value")]
         extra = [d for d in diffs if d.problem == "extra"]
 
         result: Result
