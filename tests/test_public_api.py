@@ -100,3 +100,12 @@ def test_field_diff_is_reachable_and_usable_off_a_caught_violation(
     assert diff.expected == "int"
     assert diff.observed == "absent"
     assert diff.problem == "missing"
+
+
+def test_field_diff_carries_the_value_violation_fields():
+    # A deliberate, reviewed surface change (R9 §3.2 / design §7): `FieldDiff` gained
+    # three fields and `problem` gained a "value" variant in 0.2.0. Consumers matching
+    # exhaustively on `problem` will see a value they have not seen before.
+    names = set(FieldDiff.model_fields)
+    assert names == {"field", "expected", "observed", "problem",
+                     "constraint", "violating_rows", "samples"}

@@ -1,0 +1,12 @@
+# tests/fixtures/schemas_malformed/peec/prompts_export/4.0.0.yaml
+# DELIBERATELY UNPARSEABLE: a YAML syntax error, not a schema error. `Schema.from_yaml`
+# calls yaml.safe_load BEFORE model_validate, so this raises yaml.YAMLError and never
+# reaches pydantic. Catching only ValidationError lets it out as a bare traceback with
+# empty stdout — from the one command whose entire job is a readable diagnostic.
+schema: peec.prompts_export
+version: 4.0.0
+kind: tabular
+fields:
+  - name: position
+    type: int
+   required: true

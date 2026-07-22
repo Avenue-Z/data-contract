@@ -1,0 +1,27 @@
+# tests/fixtures/schemas/peec/prompts_export/2.0.0.yaml
+# Constraints are a BREAKING schema change, so they land in a major bump (design §4.3):
+# under `@1` pinning a minor would reach every running consumer on its next resolve.
+schema: peec.prompts_export
+version: 2.0.0
+kind: tabular
+fields:
+  - name: prompt
+    type: string
+    required: true
+    min_length: 1
+  - name: sentiment
+    type: float
+    required: true
+    nullable: true
+    minimum: -1.0
+    maximum: 1.0
+  - name: position
+    type: int
+    required: true
+    nullable: true
+    minimum: 1
+  - name: is_owned
+    type: int
+    required: true
+    nullable: true
+    enum: [0, 1]
