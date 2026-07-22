@@ -1,0 +1,11 @@
+# tests/fixtures/consumer/contract_v2_observe.yaml
+# The same constrained 2.0.0 schema as contract_v2.yaml, but staged in `observe` — the
+# adoption path the CHANGELOG tells consumers to bet their rollout on: take the
+# constraint-bearing major in `observe`, read the event log, then promote to `enforce`.
+system: demo-consumer-v2-observe
+version: 1.0.0
+inputs:
+  - name: prompts
+    schema: peec.prompts_export@2.0.0
+    source: {kind: file, format: csv}
+    mode: observe

@@ -181,8 +181,13 @@ class ContractRuntime:
                 cases.append((field, str(row.get("check", "")), row.get("failure_case")))
 
         # Drop rule FIRST, aggregation second (design §5.2.2). A value check against a
-        # wrong dtype raises, and pandera records the TypeError as the failure case —
-        # aggregating first would compute counts and samples off exception reprs.
+        # wrong dtype raises, and pandera records the exception repr as the failure case —
+        # aggregating first would compute counts and samples off those reprs.
+        #
+        # The exception TYPE differs per path, so do not match on message text:
+        #   minimum/maximum on a str column -> TypeError (unorderable operands)
+        #   min_length     on an int column -> AttributeError (.str on a non-string)
+        # This filters on field membership instead, which covers both and any future check.
         wrong_dtype = {f for f, c, _ in cases if c.startswith(DTYPE_CHECK_PREFIX)}
         cases = [(f, c, v) for f, c, v in cases
                  if not (f in wrong_dtype and c in VALUE_CHECK_NAMES)]

@@ -1,4 +1,5 @@
 # tests/test_value_constraints.py
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -96,11 +97,21 @@ def test_wrong_dtype_reports_the_dtype_diff_and_drops_value_diffs():
     assert problems == {"retyped"}
 
 
-def test_no_typeerror_text_ever_reaches_samples():
+def test_no_exception_repr_ever_reaches_samples():
     # The observable form of the rule above, and what fails if the drop rule runs after
     # aggregation instead of before it.
-    exc = _violation(_good(sentiment=["not-a-number", "also-not"]))
-    assert not any("TypeError" in s for d in exc.diffs for s in d.samples)
+    #
+    # Greps for "Error(" rather than "TypeError": the two wrong-dtype paths raise
+    # DIFFERENT exception types, so a TypeError-only guard sails past a leaked
+    # min_length failure.
+    #   minimum    on a str column -> TypeError("'>=' not supported between ...")
+    #   min_length on an int column -> AttributeError("Can only use .str accessor ...")
+    # The drop rule filters on field membership, not message text, so both are dropped —
+    # this guard just has to be able to see it if that ever regresses.
+    for frame in (_good(sentiment=["not-a-number", "also-not"]),
+                  _good(prompt=[1, 2])):
+        exc = _violation(frame)
+        assert not any("Error(" in s for d in exc.diffs for s in d.samples)
 
 
 def test_nulls_do_not_trip_constraints():
@@ -159,3 +170,35 @@ def test_conforming_payload_passes():
 
 def test_payload_null_in_a_nullable_field_does_not_trip_a_bound():
     assert _emit(_runtime(), {"slug": "a", "score": None, "tier": "gold"})() is not None
+
+
+def test_an_int_bound_renders_without_a_spurious_decimal():
+    # `position` declares `minimum: 1` in the 2.0.0 fixture. Typed `float`, the label read
+    # "minimum=1.0" — a decimal bound on an integer column. No test asserted this field's
+    # label, which is how it survived review.
+    d = next(d for d in _violation(_good(position=[0, 2])).diffs if d.field == "position")
+    assert d.constraint == "minimum=1"
+
+
+# ---- the observe ladder (the documented adoption path) ----
+
+OBSERVE_CONTRACT = FIX / "consumer" / "contract_v2_observe.yaml"
+
+
+def test_a_value_violation_under_observe_logs_but_does_not_raise(event_log_path):
+    # The CHANGELOG's recommended rollout is: adopt the constraint-bearing major in
+    # `observe`, read the event log, then promote to `enforce`. That staging is only safe
+    # if a value violation under `observe` is non-fatal AND still recorded — the whole
+    # point is to see the damage before enforcing it. Adding "value" to the `hard` list
+    # makes it fatal under `enforce`; nothing pinned that it stays non-fatal under observe.
+    rt = load_runtime(OBSERVE_CONTRACT, schema_paths=[SCHEMAS])
+
+    @rt.input("prompts")
+    def load():
+        return _good(sentiment=[9.9, 0.5])
+
+    assert load() is not None  # must NOT raise
+
+    events = [json.loads(line) for line in
+              event_log_path.read_text().splitlines() if line.strip()]
+    assert [e["result"] for e in events] == ["violation"]

@@ -117,3 +117,26 @@ def test_a_schema_with_all_four_constraints_compiles_to_valid_odcs():
     block = _schema_block("prompts", s)
     validate_odcs({"apiVersion": "v3.1.0", "kind": "DataContract", "id": "x", "name": "x",
                    "version": "1.0.0", "status": "active", "schema": [block]})
+
+
+def test_a_legacy_unconstrained_schema_has_a_pinned_odcs_shape():
+    # The ODCS export changed for schemas that did NOT change. peec.prompts_export@1.0.0
+    # declares zero constraints and was untouched by the value-constraints work, yet every
+    # property lost `required` and every non-nullable one grew a `nullValues` rule. A
+    # downstream consumer diffing ODCS documents sees churn on schemas nobody edited.
+    # Pinned here so the next change to this export is a deliberate one.
+    legacy = Schema.from_yaml(FIX / "schemas" / "peec" / "prompts_export" / "1.0.0.yaml")
+    props = _schema_block("prompts", legacy)["properties"]
+    assert props == [
+        {"name": "prompt", "logicalType": "string",
+         "quality": [{"type": "library", "metric": "nullValues", "mustBe": 0}]},
+        {"name": "sentiment", "logicalType": "number"},
+        {"name": "position", "logicalType": "integer"},
+        {"name": "share_of_voice", "logicalType": "number"},
+    ]
+    # `sentiment` is `required: true, nullable: true` and emits neither fact: null
+    # tolerance is true so no rule fires, and presence has no ODCS slot (§5.4.2).
+    # That information loss is deliberate, and documented for consumers.
+    validate_odcs({"apiVersion": "v3.1.0", "kind": "DataContract", "id": "x", "name": "x",
+                   "version": "1.0.0", "status": "active",
+                   "schema": [_schema_block("prompts", legacy)]})

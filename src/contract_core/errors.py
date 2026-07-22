@@ -1,7 +1,7 @@
 # src/contract_core/errors.py
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # The single definition. `runtime.py` imports this rather than restating it: two copies
 # of the same Literal can drift, and adding a fifth variant is when that starts to matter
@@ -19,7 +19,7 @@ class FieldDiff(BaseModel):
     # observed dtype/state — so a consumer reading them does not break.
     constraint: str | None = None
     violating_rows: int | None = None
-    samples: list[str] = []
+    samples: list[str] = Field(default_factory=list)
 
 
 class ContractViolation(Exception):
