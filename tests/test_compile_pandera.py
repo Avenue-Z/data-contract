@@ -127,3 +127,62 @@ def test_all_null_column_fails_when_not_nullable():
     ps = to_pandera(_nullable_schema(nullable=False), strict=False)
     with pytest.raises(pa.errors.SchemaError):
         ps.validate(pd.DataFrame({"n": pd.array([None, None], dtype="object")}))
+
+
+# ---- value constraints: checks identified by `error=` (design §5.2) ----
+
+def _validate(field_kwargs, values):
+    """Validate one column, returning the list of (check, failure_case) pairs."""
+    s = Schema(schema="t", version="1.0.0", kind="tabular",
+               fields=[{"name": "f", "nullable": True, **field_kwargs}])
+    ps = to_pandera(s, strict=False)
+    try:
+        ps.validate(pd.DataFrame({"f": values}), lazy=True)
+        return []
+    except pa.errors.SchemaErrors as err:
+        return [(str(r["check"]), str(r["failure_case"]))
+                for _, r in err.failure_cases.iterrows()]
+
+
+def test_minimum_failure_is_named_minimum_not_a_rendered_expression():
+    # Design §5.2: `failure_cases["check"]` comes from `error=`, NOT `name=`. Built with
+    # `name=`, this reads "greater_than_or_equal_to(-1.0)" and the runtime calls it `retyped`.
+    got = _validate({"type": "float", "minimum": -1.0}, [-9.0])
+    assert [c for c, _ in got] == ["minimum"]
+
+
+def test_maximum_and_enum_and_min_length_are_named_too():
+    assert [c for c, _ in _validate({"type": "float", "maximum": 1.0}, [9.0])] == ["maximum"]
+    assert [c for c, _ in _validate({"type": "int", "enum": [0, 1]}, [5])] == ["enum"]
+    assert [c for c, _ in _validate({"type": "string", "min_length": 1}, [""])] == ["min_length"]
+
+
+def test_the_family_check_error_is_machine_recognizable():
+    # Task 5's drop rule identifies a dtype failure by this prefix. Prose here makes the
+    # rule unbuildable (design §5.2.2).
+    got = _validate({"type": "float"}, ["not-a-number"])
+    assert any(c.startswith("dtype_family:") for c, _ in got)
+
+
+def test_nulls_do_not_trip_value_checks():
+    # Design §4.2: `nullable` is the sole null gate.
+    assert _validate({"type": "float", "minimum": -1.0}, [None, 0.5]) == []
+    assert _validate({"type": "int", "enum": [0, 1]}, [None, 1]) == []
+    assert _validate({"type": "string", "min_length": 1}, [None, "ok"]) == []
+
+
+def test_conforming_data_passes_every_constraint():
+    # The true negative. A check that always fires passes any one-directional test.
+    assert _validate({"type": "float", "minimum": -1.0, "maximum": 1.0}, [0.0, 1.0, -1.0]) == []
+    assert _validate({"type": "int", "enum": [0, 1]}, [0, 1, 1]) == []
+    assert _validate({"type": "string", "min_length": 1}, ["a", "bc"]) == []
+
+
+def test_two_constraints_on_one_field_report_separately():
+    got = _validate({"type": "float", "minimum": -1.0, "maximum": 1.0}, [-9.0, 9.0])
+    assert sorted(c for c, _ in got) == ["maximum", "minimum"]
+
+
+def test_unconstrained_field_keeps_only_the_family_check():
+    got = _validate({"type": "int"}, ["nope"])
+    assert [c for c, _ in got] == ["dtype_family:int"]
