@@ -33,3 +33,42 @@ def test_passthrough_returns_authored_json_schema():
         "json_schema": authored,
     })
     assert to_json_schema(s, open=True) == authored
+
+
+# ---- value constraints (design §5.1) ----
+
+def _schema(**field_kwargs):
+    return Schema(schema="t", version="1.0.0", kind="tabular",
+                  fields=[{"name": "f", "type": field_kwargs.pop("type", "int"),
+                           **field_kwargs}])
+
+
+def test_bounds_and_min_length_become_json_schema_keywords():
+    js = to_json_schema(_schema(type="float", minimum=-1.0, maximum=1.0), open=True)
+    assert js["properties"]["f"]["minimum"] == -1.0
+    assert js["properties"]["f"]["maximum"] == 1.0
+
+    js = to_json_schema(_schema(type="string", min_length=1), open=True)
+    assert js["properties"]["f"]["minLength"] == 1
+
+
+def test_enum_becomes_an_enum_keyword():
+    js = to_json_schema(_schema(type="int", enum=[0, 1]), open=True)
+    assert js["properties"]["f"]["enum"] == [0, 1]
+
+
+def test_nullable_enum_includes_null():
+    # Design §5.1: `enum` is NOT type-scoped, so a nullable field must list null or its
+    # own `nullable: true` is contradicted.
+    js = to_json_schema(_schema(type="int", enum=[0, 1], nullable=True), open=True)
+    assert js["properties"]["f"]["enum"] == [0, 1, None]
+
+
+def test_non_nullable_enum_does_not_include_null():
+    js = to_json_schema(_schema(type="int", enum=[0, 1], nullable=False), open=True)
+    assert None not in js["properties"]["f"]["enum"]
+
+
+def test_unconstrained_field_gains_no_keywords():
+    js = to_json_schema(_schema(type="int"), open=True)
+    assert set(js["properties"]["f"]) == {"type"}
