@@ -1,6 +1,6 @@
 # Value constraints — declarative, portable, at the boundary
 
-**Status:** designed 2026-07-21, **revised twice after review (2026-07-21, 2026-07-22)**, unimplemented.
+**Status:** designed 2026-07-21, **revised three times after review (2026-07-21, 2026-07-22 ×2)**, unimplemented.
 **Closes:** most of §15 item 4 (the value-check enrichment gap). Narrows what remains of it.
 **Parent spec:** [2026-07-16-data-contract-system-design.md](2026-07-16-data-contract-system-design.md)
 — read decision #1 (Portable Core), decision #2 (inputs open / outputs complete), §4.1, §5.2, §9.
@@ -16,6 +16,14 @@
 > wrong dtype). Marked *(rev. 2)*. Revision 1 claimed "every behavioral claim below has now been
 > executed" and that claim was itself unverified. Every table of results in this document is now
 > pasted from a run.
+>
+> **Revision 3** closed the last one, and it was hiding behind a label rather than behind an
+> unverified claim: §5.4 called ODCS's missing `nullable` "a pre-existing gap, not introduced here"
+> and three rounds of review — including the ones that caught everything else — read past it. ODCS's
+> `required` is documented as *null* semantics and this project emits its *presence* flag into it, so
+> the gap was never "nullable is dropped"; it was "nullable's slot says the opposite." Marked
+> *(rev. 3)*. The lesson is narrower than revisions 1–2's and worth keeping separate: **"pre-existing"
+> is where an unexamined claim goes to be safe from review.**
 
 ## 1. The problem
 
@@ -360,8 +368,59 @@ so `mustBe: 0` is load-bearing and not decoration; omitting it fails validation.
 A complete four-constraint document in this shape was composed and passed `validate_odcs`. That
 end-to-end check — not a keyword grep — is what criterion 14 now asserts.
 
-Out of scope, named so it is a decision: ODCS's `nullable` omission is a **pre-existing** gap, not
-introduced here, and is not fixed by this design.
+**Implementation note, not a design point.** A malformed quality rule reports
+`Unevaluated properties are not allowed ('arguments', 'metric' were unexpected)` — the
+`unevaluatedProperties` construct blames the keys that are *correct* rather than the one that is
+missing or wrong. The compiler emits the shape, so no author can hit this; whoever builds §5.4.1
+will, and would otherwise lose time chasing `metric` when the real fault is elsewhere in the rule.
+
+#### 5.4.2 Nulls in the ODCS export — the gap is not what revisions 1–2 called it *(rev. 3)*
+
+Both earlier revisions disposed of this in one line: "ODCS's `nullable` omission is a pre-existing
+gap, not introduced here." Nobody checked what ODCS's `required` means. From the vendored schema:
+
+```json
+"required": {"type": "boolean", "default": false,
+             "description": "Indicates if the element may contain Null values;
+                             possible values are true and false. Default is false."}
+```
+
+**ODCS `required` is null semantics, not presence semantics, and there is no `nullable` key on the
+property** — verified against the full property list. `_schema_block` emits `"required": f.required`,
+this project's *presence* flag, into it.
+
+So `nullable` is not merely dropped: **the slot it belongs in is already occupied by a different
+concept.** A field that is `required: true, nullable: true` exports an ODCS property asserting the
+opposite of what the schema says about nulls. Before this design that lost information. This design
+adds bounds and allowed-value rules whose correctness depends on the null story, which turns a lossy
+export into one where an emitted rule means something the contract does not.
+
+That is exactly the failure §5.1 spends effort preventing for JSON Schema. Exempting ODCS from a rule
+the document applies everywhere else is not a scope decision, it is an unexamined one — and
+"pre-existing" is where such claims go to be safe from review.
+
+**The fix, all four parts verified against `validate_odcs`:**
+
+1. **Stop emitting presence into ODCS `required`.** The slot is documented as a null flag; putting a
+   presence flag there asserts something we do not mean, whichever polarity is intended.
+2. **`nullable: false` → a quality rule** `{"type": "library", "metric": "nullValues", "mustBe": 0}`.
+   `nullValues` is in `DataQualityLibrary`'s `metric` enum, so this says "zero nulls" unambiguously,
+   which the `required` boolean does not.
+3. **A nullable field carrying `enum` appends `null` to `validValues`** —
+   `{"validValues": [0, 1, null]}` — the direct analogue of §5.1's appended `None`, for the same
+   reason. ODCS lists `nullValues` and `invalidValues` as *separate* metrics, so whether
+   `invalidValues` counts nulls is engine-defined; appending makes it not matter.
+4. **Presence is not exported**, and that is stated rather than implied. There is no unambiguous ODCS
+   slot for it. `missingValues` is a candidate metric, but its semantics against `nullValues` are
+   engine-defined, and an absent claim is better than a wrong one.
+
+**A note for whoever implements part 1.** The vendored description reads "*may contain* Null values"
+with `default: false`, which is the opposite polarity from the conventional reading of a `required`
+flag. That ambiguity is a second, independent reason not to emit into it: the design cannot establish
+the intended polarity from the schema text, and a boolean emitted with a guessed polarity is worse
+than a quality rule that says what it means.
+
+No existing test asserts on ODCS `required`, so parts 1–2 change output that nothing currently pins.
 
 ## 6. Runtime semantics
 
@@ -408,7 +467,7 @@ peec.prompts_export@2.0.0 at input 'prompts':
 Samples cap at three. They are drawn from production data, so the authoring skill should note that a
 constrained field holding sensitive values will have examples surface in logs and exception messages.
 
-## 7. Public API, versioning, and the three edit sites *(rev.)*
+## 7. Public API, versioning, and the four edit sites *(rev. 2)*
 
 `FieldDiff` is on the frozen public surface (R9 §3.2). This is a deliberate public change:
 
@@ -443,8 +502,8 @@ them to one definition is a small, in-scope cleanup and this design does it.
 | Prose count/samples in `observed` | Finding 6. Breaks the field's asserted meaning and makes consumers regex a number out of a sentence. |
 | `name=` on pandera checks | Verified not to reach the classifier for the built-in constructors. §5.2. |
 | Publishing constraints in a **minor** schema bump | Finding 4. `@1` + `max(candidates)` + no lockfile means it breaks running consumers on their next resolve. |
-| Declaring the ODCS export structural-only | ODCS v3.1.0 expresses these under `logicalTypeOptions`, so the exclusion would be a choice to make §3 false for the exported artifact. |
-| `pattern` / regex now | Portable (§3), but not required by any driving example. Additive later on the same mechanism. |
+| Declaring the ODCS export structural-only | ODCS v3.1.0 expresses these under `logicalTypeOptions` **and `quality` rules** — the bounds in the former, `enum` and null-tolerance in the latter (§5.4.1, §5.4.2). The exclusion would be a choice to make §3 false for the exported artifact. |
+| `pattern` / regex now | Portable (§3); deferred on **scope**, not on "no driving example needs it" — §3 retracts that argument, since `min_length: 1` accepts `"  "` and leaves the "empty `brand`" example partially open. Additive later on the same mechanism. |
 | Exclusive bounds (`exclusiveMinimum`) | Inclusive bounds express all four examples. Additive later. |
 | The Python cross-field hook now | No caller. Its shape would be guessed, and it would be public surface. |
 | `coerce=True` to normalize values | Never. It hides the drift criterion #1 exists to catch — R8's reason. |
@@ -479,11 +538,22 @@ one-directional test, which is how a vacuous validator ships green.
 15. **`enum` compiles to a `quality` rule, not to `logicalTypeOptions`** — asserted directly, because
     emitting it as a `logicalTypeOption` fails validation on string/integer/number and passes
     *vacuously* on boolean (§5.4).
-16. **No `logicalTypeOptions` key is emitted for a `logicalType` with no branch in the ODCS chain**
-    (§5.4). A test that only checks "the document validates" cannot catch this; it must assert the
-    key's absence.
+16. **[Regression guard, not a discriminating criterion]** *(rev. 3)* **No `logicalTypeOptions` key is
+    emitted for a `logicalType` with no branch in the ODCS chain** (§5.4). Labelled honestly: given
+    §5.4.1 routes `enum` to `quality` and §4.1 confines the bounds to types that all have branches,
+    **no authorable schema can reach the state this checks**. It cannot fail today. It is kept to
+    catch a future re-route of `enum` back into `logicalTypeOptions`, where it would pass vacuously
+    on `boolean` — but §9's preamble promises each criterion discriminates, so this exception is
+    marked rather than left to look like the others.
 17. **A wrong-typed column reports the dtype diff with no `TypeError` text in `samples`** (§5.2.2) —
     the observable form of criterion 7, and what fails if the drop rule runs after aggregation.
+18. **A `nullable` field's ODCS export carries no assertion contradicting `nullable`** *(rev. 3)* —
+    specifically, no `required` flag standing in for presence (§5.4.2). This is the ODCS analogue of
+    criterion 4, and the gap two revisions dismissed as "pre-existing".
+19. **`nullable: false` emits a `nullValues` quality rule with `mustBe: 0`** (§5.4.2).
+20. **A nullable field carrying `enum` emits `validValues` including `null`** (§5.4.2) — fails
+    without it, and the failure is invisible in-process: only a third-party ODCS consumer would
+    enforce over nulls what §4.2 exempts.
 
 ## 10. Deliberately not built
 
@@ -491,6 +561,8 @@ one-directional test, which is how a vacuous validator ships green.
 - **Constraints on `date` / `datetime`.** Needs one wire encoding for constraint literals agreed
   across Pandera, JSON Schema, and ODCS first (§4.1).
 - **`enum` on `float`.** Exact float equality.
+- **Presence in the ODCS export.** No unambiguous slot exists (§5.4.2); `missingValues` is a
+  candidate metric whose semantics against `nullValues` are engine-defined.
 - **`pattern`, exclusive bounds, `maxLength`, `multipleOf`.** Additive when a real case appears.
   **Known residual:** without `pattern`, the "empty `brand`" driving example is only partially
   covered — `min_length: 1` rejects `""` but accepts `"  "` (verified). A whitespace-only brand is
