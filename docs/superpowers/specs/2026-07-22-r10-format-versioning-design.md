@@ -1,44 +1,20 @@
 # Versioning the authored format — strict keys first, `format_version` second
 
-**Status:** designed 2026-07-22, **revised twice after review (2026-07-22 ×2)**, unimplemented.
+**Status:** designed 2026-07-22, **revised three times after review (2026-07-22 ×3)**, unimplemented.
 **Closes:** R10, with a stated residual (§6). Does not close it silently.
 **Parent spec:** [2026-07-16-data-contract-system-design.md](2026-07-16-data-contract-system-design.md)
 — read R10 in §14, §15 item 3, decision #1 (Portable Core), and R6.
 **Sibling:** [2026-07-21-value-constraints-design.md](2026-07-21-value-constraints-design.md) §4.3,
 whose major-schema-bump convention is the only thing standing in for this design today.
 
-> **On evidence.** The parent spec was revised three times, and all three revisions corrected the
-> same defect: a behavioral claim asserted without running it. Every behavioral claim in this
-> document was executed against this repo at `0.2.0` (pydantic 2.13.4) before it was written down.
-> Runs are pasted, not paraphrased. Where something was *not* run, it says so.
+> **On evidence.** Every behavioral claim here was executed against this repo at `0.2.0`
+> (pydantic 2.13.4) before it was written down. Runs are pasted, not paraphrased. Where something
+> was *not* run, it says so — and §5.2 is the section to read first, because it is the one place
+> where the design's most user-visible output is specified rather than observed.
 >
-> **Revision 1** held every behavioral claim under review — they were independently reproduced — and
-> broke on a different axis: **naming and enumeration**, the two things running the code does not
-> check. The draft named its new key `apiVersion` without noticing that `odcs.py:84` already emits
-> that key with an unrelated meaning, and that it would be the only camelCase key in an
-> eighteen-key snake_case format (§4.3, marked *(rev.)*). Its edit-site table also omitted
-> `resolver.py`, which calls `Schema.from_yaml` **twice** and is therefore on the new exception's
-> propagation path (§11.1, marked *(rev.)*).
->
-> The lesson is worth keeping distinct from the parent spec's. There, unverified *behavior* was the
-> defect and running the code was the fix. Here the code was run and the design was still wrong,
-> because "does this name already mean something else in this repo?" and "what else calls this
-> function?" are grep questions, not runtime questions. **An evidence discipline aimed only at
-> execution will pass a design that collides with the codebase it is being added to.**
->
-> **Revision 2** found the third distinct class: a control specified only in the direction it will
-> rarely run. `SUPPORTED_FORMAT_VERSIONS` and "refusal is total" described how a reader *rejects* a
-> version, and the document never said how one *accepts two* — which is the only path Control B ever
-> actually takes, since the refusal exists to be rare. §4.4 now specifies it, and rejects the
-> obvious reading (branch on the changed key) in favour of normalizing on read. Marked *(rev. 2)*.
-> Revision 2 also promoted §4.3's ODCS non-export from an unchecked assertion to criterion 13 — the
-> preamble's own defect, relocated from behavior to policy and surviving two rounds inside the
-> section that diagnoses it.
->
-> Generalizing across all three: rev. 1's lesson was that running the code does not check names or
-> call sites. Rev. 2's is narrower and sharper — **verification pressure lands on the paths a design
-> describes, so the gap opens where it describes nothing at all.** Every claim in §4 was verified;
-> the accept path had no claim to verify, and so nothing pointed at it.
+> Three review rounds and what each caught are in
+> [`docs/notes/2026-07-22-r10-review-log.md`](../../notes/2026-07-22-r10-review-log.md). Sections
+> changed by review carry *(rev. N)*. The log is not needed to implement this document.
 
 ## 1. The problem
 
@@ -103,7 +79,7 @@ on `Schema` ([schema.py](../../../src/contract_core/schema.py)), `Field`
 ([types.py](../../../src/contract_core/types.py)), and `Contract` + `BoundarySpec`
 ([contract.py](../../../src/contract_core/contract.py)).
 
-### 3.1 Blast radius — measured, not estimated
+### 3.1 Blast radius — measured here, unmeasured downstream *(rev. 3)*
 
 The four edits were applied and the full suite run:
 
@@ -111,12 +87,24 @@ The four edits were applied and the full suite run:
 186 passed, 2 warnings in 3.45s
 ```
 
-**Zero failures.** No fixture, no test, and no valid authored file carries an undeclared key today,
-so strict keys break nothing that currently works. The two warnings are the pre-existing
-`schema`-shadows-`BaseModel` notices, unrelated to this change.
+**Zero failures.** The two warnings are the pre-existing `schema`-shadows-`BaseModel` notices,
+unrelated to this change.
 
-This is the whole argument for shipping Control A first: it closes §1 completely, and it costs
-nothing to adopt.
+**What this run does and does not prove *(rev. 3).*** It proves that nothing *in this repo* — no
+fixture, no test, no authored file — carries an undeclared key. It does **not** prove that adoption
+is free, because **every authored file that matters lives in a consuming repo**, which is where R10
+was filed in the first place. This run samples the wrong population for that claim, and an earlier
+draft made it anyway ("it costs nothing to adopt") in a document whose thesis is that unsampled
+claims are the defect.
+
+Stated correctly: **Control A is a breaking change for any consumer whose authored files carry a
+stray key** — a typo, a hand-added annotation, a key from a newer `contract-core`. That is
+intentional, and it is the entire point: those files are currently being read with the stray key
+silently dropped. But it is a break, it belongs in the `0.3.0` CHANGELOG in those words (§11), and
+the cost of adoption is unknown until a consuming repo runs it.
+
+What the run *does* support is the ordering argument: Control A requires no changes to this repo's
+own artifacts, so nothing about shipping it first is blocked on a migration here.
 
 ### 3.2 What it catches
 
@@ -170,15 +158,17 @@ fields:
     maximum: 1.0
 ```
 
-- **Declared as `format_version: str = "v1"`.** Missing defaults to `v1`, because a missing stamp can
-  only mean "authored before stamps existed" — which *is* `v1`. No existing file breaks, and none
-  needs editing.
-- **`SUPPORTED_FORMAT_VERSIONS = frozenset({"v1"})`**. A field validator rejects anything outside it,
-  naming both what it found and what it supports. It lives in **`types.py`** and is imported by both
-  `schema.py` and `contract.py` — one definition, for the reason `errors.py` gives for `Problem`:
-  two copies of the same constant can drift, and a `Schema` and a `Contract` disagreeing about which
-  format versions exist is precisely the mis-parse this control prevents. `types.py` imports neither
-  module, so there is no cycle.
+- **Two constants, not one** — `READABLE_FORMAT_VERSIONS` and `CURRENT_FORMAT_VERSION` (§4.5). Both
+  are `"v1"` today; they are separate because they answer different questions and diverge the moment
+  `v2` exists.
+- **A missing key means `v1`**, because a missing stamp can only mean "authored before stamps
+  existed" — which *is* `v1`. This default lives in the `from_yaml` dispatcher, **not** in the model
+  field (§4.5). No existing file breaks, and none needs editing.
+- **Both constants live in `types.py`** and are imported by `schema.py` and `contract.py` — one
+  definition each, for the reason `errors.py` gives for `Problem`: two copies of the same constant
+  can drift, and a `Schema` and a `Contract` disagreeing about which format versions exist is
+  precisely the mis-parse this control prevents. `types.py` imports neither module, so there is no
+  cycle.
 - **Major-only.** `v1`, `v2` — no minor component. §8 records why semver loses here.
 - **Refusal is total.** A reader that does not fully understand a file does not partially accept it.
   Partial acceptance of a schema file is precisely the weaker-form validation of §1.
@@ -256,17 +246,21 @@ a published data contract.
 
 ### 4.4 The accept path — normalize on read, do not branch on use *(rev. 2)*
 
-`SUPPORTED_FORMAT_VERSIONS` and "refusal is total" fully specify how a reader *rejects* a version.
-Review caught that the design never said how a reader *accepts two* — which is the only path Control
-B will ever actually run, since the refusal path exists to be rare.
+"Refusal is total" fully specifies how a reader *rejects* a version. Review caught that the design
+never said how a reader *accepts two* — which is the only path Control B will ever actually run,
+since the refusal path exists to be rare.
 
-**A reader supports every version it understands: `{"v1", "v2"}`, not `{"v2"}`.** Narrowing the set
-to the newest version alone would break every file in production simultaneously, which is the loud
-total break §1 calls survivable but which nobody would have planned for. Support is additive.
+**A reader reads every version it understands: `READABLE_FORMAT_VERSIONS = {"v1", "v2"}`, not
+`{"v2"}`.** Narrowing to the newest version alone would break every file in production
+simultaneously, which is the loud total break §1 calls survivable but which nobody would have planned
+for. The readable set is additive.
 
 **The upcast happens on the raw dict, in `from_yaml`, before `model_validate`.** A tiny step reads
-`format_version` off the parsed YAML, applies one function per version step (`_v1_to_v2`), and hands
-the current-format dict to the model. **The models only ever implement the newest format.**
+`format_version` off the parsed YAML, applies one function per version step (`_v1_to_v2`) — including
+rewriting the key to `CURRENT_FORMAT_VERSION` — and hands the current-format dict to the model.
+**The models only ever implement the newest format**, and therefore accept only
+`CURRENT_FORMAT_VERSION`. §4.5 is why that is two constants rather than one; reading §4.4 alone
+leaves a contradiction that two revisions of this document did not see.
 
 This is where the design differs from the obvious reading of "support two versions." The alternative
 — keep both meanings live in the model and branch at the changed key — is worse in a way that
@@ -294,6 +288,45 @@ This section is policy, not implementation: there is no `v2`, so there is no `_v
 What it fixes is that an implementer arriving at the first semantic change would otherwise have had
 to invent the accept path under time pressure, with a production break as the cost of choosing wrong.
 
+### 4.5 Two constants, two jobs *(rev. 3)*
+
+Revisions 1 and 2 both wrote `SUPPORTED_FORMAT_VERSIONS` as a single frozenset used by a model-level
+validator. Review showed that this cannot survive contact with §4.4: **"the models only ever
+implement the newest format" and "the model validator accepts the supported set" cannot both be
+true.** If the model accepts `v1`, then after `_v1_to_v2` runs you hold a v2-shaped object stamped
+`format_version: "v1"`, and every consumer reading that attribute is misinformed — §1's weaker-form
+problem, reached from a third direction. If the model accepts only `v2`, then the constant it
+validates against is not the reader's supported set, and §4's description of it was wrong.
+
+The split:
+
+| Constant | Value today | Who reads it | Question it answers |
+|---|---|---|---|
+| `READABLE_FORMAT_VERSIONS` | `frozenset({"v1"})` | the `from_yaml` dispatcher, on the **raw dict** | "can this reader carry this file forward?" |
+| `CURRENT_FORMAT_VERSION` | `"v1"` | the model — its field default and its **only** legal value | "is this object in the format the models implement?" |
+
+**The upcast rewrites the key.** `_v1_to_v2` sets `format_version` to `"v2"` as part of producing a
+v2-shaped dict. So a model never sees a non-current value, and a `Schema` in hand always states the
+format its own fields are in.
+
+This resolves three ambiguities that one constant could not:
+
+1. **The field default.** A directly-constructed `Schema()` is current-format by construction, so its
+   default must be `CURRENT_FORMAT_VERSION`. A file with no stamp is `v1` regardless of what is
+   current. One default cannot serve both — so the missing-key default lives in the dispatcher, which
+   reads the raw dict *before* the model has defaults to apply.
+2. **Rejection authority.** The dispatcher rejects what it cannot read (`v3`, with no upcast chain);
+   the model rejects what is not current. Both raise, and they are not redundant: the model's check
+   is what catches an upcast that forgot to rewrite the key. Without the split, two sites reject
+   using one constant for two meanings — the drift this section's own bullet cites `errors.py` to
+   argue against.
+3. **What criterion 5 pins.** `from_yaml` rejection is the dispatcher's; direct-construction
+   rejection is the model's. Criterion 5 tests both, and now says which is which.
+
+Today both constants are `"v1"`, which is exactly why two revisions of this document read fine with
+one name. The cost of the split is one extra constant; the cost of not splitting is discovered at
+the first semantic change, in production, by an implementer who inherited a contradiction.
+
 ## 5. `ContractFormatError`
 
 ### 5.1 Where it is raised
@@ -308,9 +341,11 @@ that into a second exception type would make consumers handle two errors that ne
 response.
 
 Direct model construction (`Field(name=..., type=...)`) keeps raising `ValidationError` unchanged.
-This is deliberate and it is why the boundary is drawn here: `tests/test_types.py` asserts
-`ValidationError` in 16 places against directly-constructed `Field`s, and none of them is testing a
-file-format concern. Wrapping at the model level would churn all 16 to prove nothing.
+This is deliberate and it is why the boundary is drawn here: `tests/test_types.py` has **15**
+`pytest.raises(ValidationError)` sites against directly-constructed `Field`s (plus one
+`pytest.raises(ValueError)` and the import on line 3 — an earlier draft reported the grep total, 16,
+which is the wrong register for a document that pastes run output). None of them tests a file-format
+concern. Wrapping at the model level would churn all 15 to prove nothing.
 
 ### 5.2 The message, and the conditional hint
 
@@ -350,6 +385,42 @@ ContractFormatError: schemas/peec/prompts_export/3.0.0.yaml is not a valid schem
   fields.0: field 'position': min_length applies to string, not 'int'
 ```
 
+#### 5.2.1 The message is not what the operator reads *(rev. 3)*
+
+Everything above describes the **exception**. `contract lint` — the command whose entire job is a
+readable diagnostic, and the surface an operator actually meets — does not print it.
+[`cli.py:46`](../../../src/contract_core/cli.py#L46) returns
+`str(exc.errors()[0]["msg"]).removeprefix("Value error, ")`: the **first error only**, and for
+`extra_forbidden` pydantic's `msg` carries no `loc`. Run against the §5.2 scenario, with strict keys
+applied and a schema file declaring two unknown keys (`pattern`, `max_length`):
+
+```
+what the operator sees from contract lint:
+  - Extra inputs are not permitted
+```
+
+No key names. No count — two unknown keys, one reported. No upgrade hint. The operator goes and
+debugs their YAML by hand.
+
+**Every criterion in revision 2 was green in that state.** Criterion 8 asserts on the exception,
+criterion 10 asserts "not a traceback," and both pass while the deliverable is useless. This is
+§4.4's own thesis landing one section later: the accept path got specified and the render path did
+not, so nothing pointed at it.
+
+So `ContractFormatError` carries an **attribute surface**, not just a rendered string:
+
+| Attribute | Type | Purpose |
+|---|---|---|
+| `.path` | `str` | the file, so a caller can group or re-report by artifact |
+| `.errors` | `list[tuple[str, str]]` | `(loc, msg)` per failure — the full set, not the first |
+| `.hint` | `str \| None` | the upgrade sentence when §5.2's condition holds, else `None` |
+
+`cli.py` renders from `.errors` — one diagnostic line per offending key path — and appends `.hint`
+when present. `str(exc)` composes the same parts, so the library caller and the CLI cannot drift.
+
+These three names are **frozen surface** in the same sense as `FieldDiff`'s field names (§5.3): a
+consumer reads them to build custom handling, so renaming one is a breaking change.
+
 ### 5.3 Public API
 
 `ContractFormatError` is exported from `contract_core`. The frozen surface goes **5 → 6**:
@@ -382,10 +453,22 @@ which makes pydantic a de-facto part of this package's API. Wrapping at the boun
 
 ### 5.4 `cli.py`
 
-[`cli.py`](../../../src/contract_core/cli.py) catches `ValidationError` and `yaml.YAMLError` in
-separate arms. Those two collapse into one `ContractFormatError` arm. The `OSError` arm stays, per
-§5.1. `lint` must keep reporting diagnostics rather than tracebacks — the behavior `0.2.0` added and
-the malformed fixtures at `tests/fixtures/schemas_malformed/` exist to pin.
+Two changes, and the first one is the deliverable rather than a tidy-up.
+
+**`_load_failure` renders from `.errors`, not from `errors()[0]["msg"]`.** Its `ValidationError` and
+`yaml.YAMLError` arms collapse into one `ContractFormatError` arm; the `OSError` arm stays, per §5.1.
+But collapsing the arms is not the point — §5.2.1 is. `_load_failure` returns a `str | None` today,
+which structurally cannot carry per-key detail for a multi-error failure. It returns the **rendered
+lines** for the file, and `lint` prints each. Criterion 14 is what holds this.
+
+**`lint` needs an arm it has never had.** [`cli.py:66`](../../../src/contract_core/cli.py#L66) calls
+`Contract.from_yaml(contract_path)` bare — a malformed *contract* file tracebacks today, and would
+traceback as `ContractFormatError` after. That is pre-existing, not caused here, but this design is
+what makes it reachable through a new exception type while claiming `lint` reports diagnostics rather
+than tracebacks. Same treatment as `_load_failure`: catch, render, exit non-zero.
+
+`lint` must keep reporting diagnostics rather than tracebacks — the behavior `0.2.0` added and the
+malformed fixtures at `tests/fixtures/schemas_malformed/` exist to pin.
 
 ## 6. The residual — stated, not solved
 
@@ -487,11 +570,13 @@ point is that this failure stops being survivable-by-not-noticing.
 10. `contract lint` reports the malformed fixtures as diagnostics with a clean exit path, not as
     tracebacks — the `0.2.0` behavior survives the exception-type change.
 11. `set(contract_core.__all__)` is exactly the six names of §5.3.
-12. Every pre-existing test still passes, with no edits to them and no edits to any fixture (§3.1).
-    New tests for criteria 1–11 are added alongside; the count grows, but nothing already green goes
-    red or gets rewritten to stay green. **Re-baseline the count before relying on it** — `186` is a
-    reading taken on 2026-07-22 at `0.2.0`, not a constant, and any commit between then and
-    implementation moves it. The invariant is "no pre-existing test changed," not the integer.
+12. Every pre-existing test still passes, and **exactly one is edited**: `FROZEN_SURFACE` in
+    `tests/test_public_api.py`, 5 → 6. That edit is not an exception to the rule, it is the rule
+    working — `test_public_surface_is_frozen` exists to fail on a surface change, and R9 §3.2
+    requires the change be conscious and reviewed. Nothing else already green goes red or gets
+    rewritten to stay green, and no fixture is edited. **Re-baseline the count before relying on
+    it** — `186` is a reading taken on 2026-07-22 at `0.2.0`, not a constant, and any commit between
+    then and implementation moves it. The invariant is the sentence, not the integer.
 13. `format_version` does **not** appear in the ODCS export (§4.3, last paragraph). The enforcement
     for this is **pre-existing, not new work**: the vendored ODCS schema sets both
     `additionalProperties: false` and `unevaluatedProperties: false` at top level, and
@@ -507,6 +592,13 @@ point is that this failure stops being survivable-by-not-noticing.
     A leak fails the existing suite the moment it is introduced. This was a §11 "confirm" row in
     rev. 1 — a claim with no check, which is the defect class this document's own preamble
     diagnoses, relocated from behavior to policy.
+14. **`contract lint` on a file with two unknown keys names both key paths and prints the hint.**
+    Not the exception — the **stdout an operator reads** (§5.2.1). Criterion 8 asserts on the
+    exception object and passes today against a diagnostic that reads, in full,
+    `Extra inputs are not permitted`. This criterion is the one that fails in that state. It also
+    pins the count: two unknown keys produce two diagnostic lines, not one.
+15. `contract lint` on a **malformed contract file** reports a diagnostic and exits non-zero rather
+    than raising through `cli.py:66` (§5.4). This path has never had a handler.
 
 ## 10. Deliberately not built
 
@@ -530,14 +622,14 @@ point is that this failure stops being survivable-by-not-noticing.
 | `src/contract_core/schema.py` | `extra="forbid"`; `format_version` field + validator |
 | `src/contract_core/types.py` | `extra="forbid"` on `Field` |
 | `src/contract_core/contract.py` | `extra="forbid"` on `Contract` + `BoundarySpec`; `format_version` |
-| `src/contract_core/errors.py` | `ContractFormatError`, subclassing `ValueError` |
+| `src/contract_core/errors.py` | `ContractFormatError`, subclassing `ValueError`, with `.path` / `.errors` / `.hint` (§5.2.1) |
 | `src/contract_core/__init__.py` | export it; `__version__` → `0.3.0` |
-| `src/contract_core/cli.py` | collapse two except-arms into one; keep `OSError` |
+| `src/contract_core/cli.py` | `_load_failure` renders per-error from `.errors`; **new arm at line 66** for the contract file (§5.4) |
 | `src/contract_core/compile/odcs.py` | **none** — non-export is criterion 13, already enforced |
 | `tests/test_public_api.py` | `FROZEN_SURFACE` 5 → 6 |
 | `tests/` (new) | criteria §9 |
-| `CHANGELOG.md` | `0.3.0` entry; minimum-supported-reader statement |
-| `docs/consuming-repo-setup.md` | pin `>= 0.3.0`, and why |
+| `CHANGELOG.md` | `0.3.0` entry; **BREAKING — unknown keys in authored files now fail; previously ignored** (§3.1); minimum-supported-reader statement |
+| `docs/consuming-repo-setup.md` | pin `>= 0.3.0` and why; **the strict-keys rule**; `format_version` as a writable key |
 | `docs/superpowers/specs/2026-07-16-data-contract-system-design.md` | R10 row + §15 item 3, closed **with** the §6 residual |
 
 ### 11.1 Propagation paths — no edit expected, and that is a conclusion *(rev.)*
@@ -550,8 +642,8 @@ enumerated rather than assumed:
 | [`resolver.py:45`](../../../src/contract_core/resolver.py#L45) | exact-version resolve | none |
 | [`resolver.py:52`](../../../src/contract_core/resolver.py#L52) | major-pin glob resolve | none |
 | [`runtime.py:325`](../../../src/contract_core/runtime.py#L325) | `load_runtime` → `Contract.from_yaml` | none |
-| [`cli.py:42`](../../../src/contract_core/cli.py#L42) | `lint` → `Schema.from_yaml` | §5.4 |
-| [`cli.py:66`](../../../src/contract_core/cli.py#L66) | `Contract.from_yaml` | §5.4 |
+| [`cli.py:42`](../../../src/contract_core/cli.py#L42) | `lint` → `Schema.from_yaml` | render per-error (§5.4) |
+| [`cli.py:66`](../../../src/contract_core/cli.py#L66) | `lint` → `Contract.from_yaml` | **new arm — has none today** (§5.4) |
 
 `Resolver.resolve` has **two** call sites, not one, and neither catches anything today — so a
 malformed schema reached during resolution propagates out of `load_runtime` as
@@ -562,6 +654,18 @@ so nothing that catches broadly today breaks), which is *why* no edit is expecte
 missing from the first draft of this table, and an implementer reading it would have had no signal
 that resolution is on the new exception's path at all. An implementer should confirm each row rather
 than inherit it — this table is reasoning, not a run.
+
+`cli.py:66` is the row that proves the point. Rev. 1 added it and marked it "§5.4," which read as
+covered; §5.4 discussed only `_load_failure`, so the one call site on this list with **no handler at
+all** was the one the table implied was handled. Criterion 15 now pins it.
+
+### 11.2 Why `consuming-repo-setup.md` needs more than a pin *(rev. 3)*
+
+That file is not only install instructions — it documents the authored format *for authors*, including
+`enum` / `minimum` / `maximum` / `min_length` under "Value constraints." Scoping its edit to "pin
+`>= 0.3.0`" would ship a format whose newest rule (unknown keys now fail) and newest writable key
+(`format_version`) appear in no author-facing document. An author's first encounter with strict keys
+would then be a lint error for a rule nobody wrote down.
 
 Release: **`0.3.0`**, minor under 0.x semantics — the public surface changed (§5.3), and per
 `CHANGELOG.md`'s own preamble a 0.x minor may carry breaking changes to the authored format.
