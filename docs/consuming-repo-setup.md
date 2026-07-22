@@ -50,6 +50,21 @@ def load_prompts():
 will be called out as a **behavior** change in [`CHANGELOG.md`](../CHANGELOG.md) — a stable signature
 is not a promise of stable resolved bytes.
 
+### Value constraints
+
+A schema field may declare `enum`, `minimum`, `maximum`, or `min_length`. They are enforced at the
+boundary alongside presence and type, and a violation raises `ContractViolation` under `enforce`:
+
+```python
+except ContractViolation as exc:
+    for d in exc.diffs:
+        if d.problem == "value":
+            print(d.field, d.constraint, d.violating_rows, d.samples)
+```
+
+Constraints apply only to non-null values — `nullable` is the only null gate. Adding one to a schema
+is a **breaking** change and requires a major version bump.
+
 ## 3. Turning validation off
 
 Two knobs, and **"off always wins"**:

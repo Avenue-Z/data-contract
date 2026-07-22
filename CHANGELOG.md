@@ -11,6 +11,42 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.2.0] — unreleased, pending tag
+
+### Added
+
+- **Value constraints on schema fields** — `enum`, `minimum`, `maximum`, `min_length`.
+  They compile to Pandera checks, JSON Schema keywords, and the ODCS export, and they
+  hard-fail through the existing `observe`/`warn`/`enforce` ladder like structural drift.
+  A violation reports the constraint, how many rows broke it, and up to three samples.
+- Applicability is checked when the schema loads: `minimum`/`maximum` on `int`/`float`,
+  `min_length` on `string`, `enum` on `string`/`int`/`bool` with values matching the
+  declared type. `contract lint` now validates **every** schema file it can see, not only
+  the ones the given contract references.
+
+### Changed
+
+- **BREAKING — `FieldDiff` gained a `"value"` variant of `problem`.** Code matching
+  exhaustively on `problem` will see a value it has not seen before.
+- **BREAKING — `FieldDiff` gained three fields**: `constraint`, `violating_rows`, and
+  `samples`. They are `None`/empty on every structural diff. `field`, `expected`,
+  `observed` and `problem` keep their meanings.
+- **The ODCS export no longer emits `required`.** ODCS documents that key as null
+  semantics ("may contain Null values"), not presence, so this project's presence flag
+  did not belong in it. Null tolerance is now a `nullValues` quality rule, and an `enum`
+  becomes an `invalidValues` rule. Presence is not exported — ODCS has no unambiguous slot.
+
+### Notes for consumers
+
+- **Adding a constraint to a schema is a BREAKING change: bump the schema's MAJOR
+  version.** A constraint can fail data that previously passed, and a `@1` pin resolves to
+  the highest matching minor — so publishing constraints in a minor would reach every
+  running consumer on its next resolve. Adopt a constraint-bearing major with the boundary
+  in `observe`, read the event log, then promote to `enforce`.
+- Constraints skip nulls. `nullable` remains the only null gate.
+- `min_length: 1` rejects `""` but accepts `"  "`. A non-blank check needs `pattern`, which
+  is not implemented yet.
+
 ## [0.1.0] — 2026-07-21
 
 First installable release. Before this, `contract-core` existed only as an editable local
