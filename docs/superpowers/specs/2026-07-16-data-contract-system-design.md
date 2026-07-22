@@ -492,8 +492,20 @@ belong in this repo, not in any one pilot.**
    and the runtime applies exactly that — an author currently has **no way to attach** the enrichment
    the principle assumes. So the structural-core split is honored, but its other half is unbuilt. For
    this pilot that means the likely real corruption (sentiment out of range, `is_owned ∉ {0,1}`,
-   negative ranks, empty `brand`) passes silently. *Owned: Phase 1 — design the enrichment attach-point
-   alongside the runtime.*
+   negative ranks, empty `brand`) passes silently.
+   ***CLOSED 2026-07-22** (`23f02d7`, PR #21), released as `v0.2.0`. Took the **declarative** option
+   rather than an imperative attach-point: the enrichment is four optional keys on a field — `enum`,
+   `minimum`, `maximum`, `min_length` — not a hook accepting arbitrary Pandera checks. That choice is
+   the load-bearing one, because a declared constraint compiles to all three targets (Pandera, JSON
+   Schema, ODCS) and stays portable, whereas a Python callable would be Python-only and would widen
+   R6's weaker-form gap instead of leaving it where decision #1 put it. Deliberately NOT built:
+   `pattern`, exclusive bounds, `maxLength`, `multipleOf`, and cross-field checks — cross-field is the
+   one this item's title implies and it remains unbuilt, so "value/cross-field enrichment" is now
+   **half** delivered, not whole. Applicability and satisfiability are validated at schema load (six
+   rejections, enumerated in `CHANGELOG.md`); a violation reports the constraint, the offending row
+   count and up to three samples. The exact corruption named above — sentiment out of range,
+   `is_owned ∉ {0,1}`, negative ranks, empty `brand` — is the literal test suite in
+   `tests/test_value_constraints.py`. Design: [`2026-07-21-value-constraints-design.md`](2026-07-21-value-constraints-design.md).*
 5. **Library-hygiene defects to clear alongside the above:** `ContractRuntime.REGISTRY` is
    process-global mutable class state (leaks across contracts/tests — the pilot's registry assertion is
    already order-dependent); ~~an empty (0-row) result frame is reported as "all columns missing" instead
@@ -530,8 +542,17 @@ which **compound across repos**. Recommendation: clear **R8, R9, and item 4** be
 — they are the difference between "drop it in and it helps" and "drop it in and it cries wolf / can't
 install / silently misses the real bugs."
 
-**Progress against that gate (2026-07-21):** R8 closed (`67e1b8d`) — it no longer cries wolf. R9
-closed and released as `v0.1.0` — it installs. **Item 4 is the last of the three**, and it is the
-"silently misses the real bugs" one: until the enrichment attach-point exists, the corruption this
-pilot is most likely to actually meet — sentiment out of range, `is_owned ∉ {0,1}`, negative ranks,
-empty `brand` — passes validation. Structural drift is caught; nonsense values are not.
+**Progress against that gate (2026-07-22): all three cleared.** R8 closed (`67e1b8d`) — it no longer
+cries wolf. R9 closed and released as `v0.1.0` — it installs. Item 4 closed (`23f02d7`) and released
+as `v0.2.0` — it no longer silently misses the real bugs: the corruption this pilot is most likely to
+meet (sentiment out of range, `is_owned ∉ {0,1}`, negative ranks, empty `brand`) now hard-fails at the
+boundary with a row count and samples.
+
+**The onboarding-repo-#2 gate is therefore met.** What that does *not* mean is that Phase 1 is done —
+clearing the gate was a precondition for adoption, not the phase. Still open before "new automations
+get contracts by default" is true: `reconcile` and its R3 registration-completeness work, R2's
+drift-test enforcement, the §5.5 authoring skill and R7's adoption measurement, and R10's format
+`apiVersion`. Item 5's library-hygiene list is also still open, and one entry on it now matters more
+than it did: **the event log still has no reader.** `v0.2.0`'s documented adoption path is "adopt the
+constraint-bearing major in `observe`, read the event log, then promote to `enforce`" — that
+instruction currently resolves to "parse the JSONL yourself."
