@@ -112,3 +112,50 @@ def test_a_missing_column_still_reports_missing():
     d = next(d for d in _violation(frame).diffs if d.field == "position")
     assert d.problem == "missing"
     assert d.violating_rows is None
+
+
+# ---- payload boundaries (design §5.3) ----
+
+def _emit(rt, payload):
+    @rt.output("report")
+    def emit():
+        return payload
+    return emit
+
+
+def _payload_violation(payload):
+    with pytest.raises(ContractViolation) as ei:
+        _emit(_runtime(), payload)()
+    return ei.value
+
+
+def test_payload_enum_violation_raises_rather_than_vanishing():
+    # Design §5.3: a constraint that enforces on tabular boundaries and silently no-ops on
+    # payload ones is worse than one that does not exist.
+    exc = _payload_violation({"slug": "a", "score": 0.5, "tier": "bronze"})
+    d = next(d for d in exc.diffs if d.field == "tier")
+    assert d.problem == "value"
+    assert d.constraint == 'enum=[\'gold\', \'silver\']'
+
+
+def test_payload_bound_violation_raises():
+    d = next(d for d in _payload_violation(
+        {"slug": "a", "score": 9.0, "tier": "gold"}).diffs if d.field == "score")
+    assert d.problem == "value"
+    assert d.constraint == "maximum=1.0"
+
+
+def test_payload_value_diff_has_no_row_count():
+    # A payload is one document, not a frame: `violating_rows` is meaningless here.
+    d = next(d for d in _payload_violation(
+        {"slug": "a", "score": 9.0, "tier": "gold"}).diffs if d.field == "score")
+    assert d.violating_rows is None
+    assert d.samples == ["9.0"]
+
+
+def test_conforming_payload_passes():
+    assert _emit(_runtime(), {"slug": "a", "score": 0.5, "tier": "gold"})() is not None
+
+
+def test_payload_null_in_a_nullable_field_does_not_trip_a_bound():
+    assert _emit(_runtime(), {"slug": "a", "score": None, "tier": "gold"})() is not None

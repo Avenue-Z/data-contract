@@ -7,3 +7,8 @@ inputs:
     schema: peec.prompts_export@2.0.0
     source: {kind: file, format: csv}
     mode: enforce
+outputs:
+  - name: report
+    schema: aivx.report@2.0.0
+    sink: {kind: file, format: json}
+    mode: enforce

@@ -244,6 +244,22 @@ class ContractRuntime:
                 field = str(err.path[-1])
                 diffs.append(FieldDiff(field=field, expected=str(err.validator_value),
                                        observed=type(err.instance).__name__, problem="retyped"))
+            elif err.validator in ("enum", "minimum", "maximum", "minLength"):
+                # Design §5.3: without this branch a jsonschema value error matches no
+                # branch and is dropped, so constraints compile into the payload schema
+                # and then do nothing.
+                field = str(err.path[-1]) if err.path else "?"
+                # NOT named `declared`: the additionalProperties branch below binds that
+                # name to a set of field names, and one name for two types is a mypy error.
+                declared_field = next(
+                    (f for f in (resolved.fields or []) if f.name == field), None)
+                key = {"minLength": "min_length"}.get(str(err.validator), str(err.validator))
+                diffs.append(FieldDiff(
+                    field=field, expected=str(declared_field.type) if declared_field else "?",
+                    observed=type(err.instance).__name__, problem="value",
+                    constraint=_constraint_label(key, declared_field),
+                    violating_rows=None, samples=[str(err.instance)],
+                ))
             elif err.validator == "additionalProperties" and is_output:
                 # closed output: name the extras
                 declared = set((resolved.json_schema or {}).get("properties", {})) \
