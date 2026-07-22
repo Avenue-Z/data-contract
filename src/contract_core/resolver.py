@@ -8,11 +8,15 @@ class SchemaNotFound(KeyError):
     pass
 
 
-def _parse_semver(v: str) -> tuple[int, int, int] | None:
+def parse_semver(v: str) -> tuple[int, int, int] | None:
     """Parse a semver stem, or return None for a non-versioned filename.
 
     Returning None (rather than raising) lets the major-pin glob skip stray
     files like `latest.yaml` or `_template.yaml` instead of crashing on them.
+
+    Public (no leading underscore) because "what stem counts as a schema file" is now a
+    contract shared with `cli._lintable_schema_files`, not a resolver-private detail:
+    lint must consider exactly the files the resolver would, and no others.
     """
     try:
         parts = [int(p) for p in v.split(".")]
@@ -41,7 +45,7 @@ class Resolver:
                     return Schema.from_yaml(path)
             else:
                 major = int(version)
-                parsed = ((p, _parse_semver(p.stem)) for p in schema_dir.glob("*.yaml"))
+                parsed = ((p, parse_semver(p.stem)) for p in schema_dir.glob("*.yaml"))
                 candidates = [(p, v) for p, v in parsed if v is not None and v[0] == major]
                 if candidates:
                     best = max(candidates, key=lambda c: c[1])[0]

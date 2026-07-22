@@ -4,22 +4,26 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pandas as pd
 import pandera.pandas as pa
 
 from contract_core.compile.jsonschema_compile import to_json_schema
-from contract_core.compile.pandera_compile import to_pandera
+from contract_core.compile.pandera_compile import (
+    DTYPE_CHECK_PREFIX,
+    VALUE_CHECK_NAMES,
+    to_pandera,
+)
 from contract_core.contract import BoundarySpec, Contract
 from contract_core.errors import ContractViolation, FieldDiff
 from contract_core.events import EventLog, Result
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
+from contract_core.types import Field as FieldSpec
 
 # A boundary decorator: wraps a data-producing function, validating its return value.
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
-Problem = Literal["missing", "retyped", "nullable", "extra"]
 
 # `CONTRACT_DISABLED` is an ops kill switch, so its activation rule is pinned, not "truthy"
 # (R9 design §3.3): typing `0`/`false`/`off` must turn the switch OFF, not disable every contract.
@@ -37,6 +41,30 @@ def _env_disabled() -> bool:
 def _default_clock() -> str:
     from datetime import UTC, datetime
     return datetime.now(UTC).isoformat()
+
+
+def _failure_field(row: Any) -> str | None:
+    """The field a pandera failure case belongs to.
+
+    For `column_in_dataframe` the field name is in `failure_case` and `column` is NaN, so a
+    group-by on the raw `column` would put every missing column in one NaN bucket
+    (design §5.2.1).
+    """
+    if str(row.get("check", "")) == "column_in_dataframe":
+        return str(row.get("failure_case"))
+    col = row.get("column")
+    if col is None or (isinstance(col, float) and pd.isna(col)):
+        return None
+    return str(col)
+
+
+def _constraint_label(check: str, declared: "FieldSpec | None") -> str:
+    """`maximum=1.0` — what the operator needs to see, from the schema not the frame."""
+    if declared is None:
+        return check
+    value = {"enum": declared.enum, "minimum": declared.minimum,
+             "maximum": declared.maximum, "min_length": declared.min_length}[check]
+    return f"{check}={value}"
 
 
 class ContractRuntime:
@@ -115,7 +143,7 @@ class ContractRuntime:
         else:
             diffs, observed = self._validate_payload(resolved, data, is_output)
 
-        hard = [d for d in diffs if d.problem in ("missing", "retyped", "nullable")]
+        hard = [d for d in diffs if d.problem in ("missing", "retyped", "nullable", "value")]
         extra = [d for d in diffs if d.problem == "extra"]
 
         result: Result
@@ -141,42 +169,61 @@ class ContractRuntime:
         assert resolved.fields is not None  # tabular schema always has fields
         observed: dict[str, Any] = {"columns": list(df.columns),
                                     "dtypes": {c: str(t) for c, t in df.dtypes.items()}}
-        diffs: list[FieldDiff] = []
         ps = to_pandera(resolved, strict=False)
+        cases: list[tuple[str, str, Any]] = []
         try:
             ps.validate(df, lazy=True)
         except pa.errors.SchemaErrors as err:
             for _, row in err.failure_cases.iterrows():
-                check = str(row.get("check", ""))
-                problem: Problem
-                if check == "column_in_dataframe":
-                    # missing required column: name is in `failure_case`, not `column`.
-                    field = str(row.get("failure_case"))
-                    problem = "missing"
-                    field_observed = "absent"
-                else:
-                    # a dtype/value check on a present column: name is in `column`.
-                    col = row.get("column")
-                    if col is None or (isinstance(col, float) and pd.isna(col)):
-                        continue
-                    field = str(col)
-                    if check == "not_nullable":
-                        # a null-tolerance violation, not a type change: don't
-                        # mislabel it `retyped` with a (valid) dtype as observed.
-                        problem = "nullable"
-                        field_observed = "null"
-                    else:
-                        problem = "retyped"
-                        field_observed = str(df.dtypes.get(field, "absent"))
-                declared = next((f for f in resolved.fields if f.name == field), None)
-                expected = declared.type if declared else "?"
-                diffs.append(FieldDiff(field=field, expected=str(expected),
-                                       observed=field_observed, problem=problem))
-        # de-dup by field
-        seen: dict[str, FieldDiff] = {}
-        for d in diffs:
-            seen[d.field] = d
-        diffs = list(seen.values())
+                field = _failure_field(row)
+                if field is None:
+                    continue
+                cases.append((field, str(row.get("check", "")), row.get("failure_case")))
+
+        # Drop rule FIRST, aggregation second (design §5.2.2). A value check against a
+        # wrong dtype raises, and pandera records the exception repr as the failure case —
+        # aggregating first would compute counts and samples off those reprs.
+        #
+        # The exception TYPE differs per path, so do not match on message text:
+        #   minimum/maximum on a str column -> TypeError (unorderable operands)
+        #   min_length     on an int column -> AttributeError (.str on a non-string)
+        # This filters on field membership instead, which covers both and any future check.
+        wrong_dtype = {f for f, c, _ in cases if c.startswith(DTYPE_CHECK_PREFIX)}
+        cases = [(f, c, v) for f, c, v in cases
+                 if not (f in wrong_dtype and c in VALUE_CHECK_NAMES)]
+
+        groups: dict[tuple[str, str], list[Any]] = {}
+        for field, check, value in cases:
+            groups.setdefault((field, check), []).append(value)
+
+        # Structural diffs collapse per field ("column missing" twice is noise); value
+        # diffs do not collapse across constraints, because `minimum` and `maximum` on one
+        # field are two distinct facts (design §5.2.1).
+        structural: dict[str, FieldDiff] = {}
+        diffs: list[FieldDiff] = []
+        for (field, check), values in groups.items():
+            declared = next((f for f in resolved.fields if f.name == field), None)
+            expected = str(declared.type) if declared else "?"
+            observed_dtype = str(df.dtypes.get(field, "absent"))
+            if check in VALUE_CHECK_NAMES:
+                diffs.append(FieldDiff(
+                    field=field, expected=expected, observed=observed_dtype,
+                    problem="value", constraint=_constraint_label(check, declared),
+                    violating_rows=len(values),
+                    samples=[str(v) for v in values[:3]],
+                ))
+            elif check == "column_in_dataframe":
+                structural[field] = FieldDiff(field=field, expected=expected,
+                                              observed="absent", problem="missing")
+            elif check == "not_nullable":
+                # a null-tolerance violation, not a type change: don't mislabel it
+                # `retyped` with a (valid) dtype as observed.
+                structural[field] = FieldDiff(field=field, expected=expected,
+                                              observed="null", problem="nullable")
+            else:
+                structural[field] = FieldDiff(field=field, expected=expected,
+                                              observed=observed_dtype, problem="retyped")
+        diffs = [*structural.values(), *diffs]
         if is_output:
             declared_names = {f.name for f in resolved.fields}
             for c in df.columns:
@@ -202,6 +249,22 @@ class ContractRuntime:
                 field = str(err.path[-1])
                 diffs.append(FieldDiff(field=field, expected=str(err.validator_value),
                                        observed=type(err.instance).__name__, problem="retyped"))
+            elif err.validator in ("enum", "minimum", "maximum", "minLength"):
+                # Design §5.3: without this branch a jsonschema value error matches no
+                # branch and is dropped, so constraints compile into the payload schema
+                # and then do nothing.
+                field = str(err.path[-1]) if err.path else "?"
+                # NOT named `declared`: the additionalProperties branch below binds that
+                # name to a set of field names, and one name for two types is a mypy error.
+                declared_field = next(
+                    (f for f in (resolved.fields or []) if f.name == field), None)
+                key = {"minLength": "min_length"}.get(str(err.validator), str(err.validator))
+                diffs.append(FieldDiff(
+                    field=field, expected=str(declared_field.type) if declared_field else "?",
+                    observed=type(err.instance).__name__, problem="value",
+                    constraint=_constraint_label(key, declared_field),
+                    violating_rows=None, samples=[str(err.instance)],
+                ))
             elif err.validator == "additionalProperties" and is_output:
                 # closed output: name the extras
                 declared = set((resolved.json_schema or {}).get("properties", {})) \

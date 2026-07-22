@@ -1,0 +1,15 @@
+# tests/fixtures/schemas_malformed/peec/prompts_export/3.0.0.yaml
+# DELIBERATELY INVALID: min_length on an int field. `lint` must report this even though no
+# fixture contract references 3.0.0 (design §4.1.1).
+#
+# It lives in its own schemas root, NOT alongside the valid fixtures, because `lint` now
+# fails on every malformed schema it can see — dropping it into tests/fixtures/schemas
+# would make test_lint_ok (which lints that root and expects exit 0) fail.
+schema: peec.prompts_export
+version: 3.0.0
+kind: tabular
+fields:
+  - name: position
+    type: int
+    required: true
+    min_length: 1
