@@ -1,6 +1,6 @@
-# Versioning the authored format — strict keys first, `apiVersion` second
+# Versioning the authored format — strict keys first, `format_version` second
 
-**Status:** designed 2026-07-22, unimplemented.
+**Status:** designed 2026-07-22, **revised once after review (2026-07-22)**, unimplemented.
 **Closes:** R10, with a stated residual (§6). Does not close it silently.
 **Parent spec:** [2026-07-16-data-contract-system-design.md](2026-07-16-data-contract-system-design.md)
 — read R10 in §14, §15 item 3, decision #1 (Portable Core), and R6.
@@ -11,6 +11,20 @@ whose major-schema-bump convention is the only thing standing in for this design
 > same defect: a behavioral claim asserted without running it. Every behavioral claim in this
 > document was executed against this repo at `0.2.0` (pydantic 2.13.4) before it was written down.
 > Runs are pasted, not paraphrased. Where something was *not* run, it says so.
+>
+> **Revision 1** held every behavioral claim under review — they were independently reproduced — and
+> broke on a different axis: **naming and enumeration**, the two things running the code does not
+> check. The draft named its new key `apiVersion` without noticing that `odcs.py:84` already emits
+> that key with an unrelated meaning, and that it would be the only camelCase key in an
+> eighteen-key snake_case format (§4.3, marked *(rev.)*). Its edit-site table also omitted
+> `resolver.py`, which calls `Schema.from_yaml` **twice** and is therefore on the new exception's
+> propagation path (§11.1, marked *(rev.)*).
+>
+> The lesson is worth keeping distinct from the parent spec's. There, unverified *behavior* was the
+> defect and running the code was the fix. Here the code was run and the design was still wrong,
+> because "does this name already mean something else in this repo?" and "what else calls this
+> function?" are grep questions, not runtime questions. **An evidence discipline aimed only at
+> execution will pass a design that collides with the codebase it is being added to.**
 
 ## 1. The problem
 
@@ -51,7 +65,7 @@ It is R6's weaker-form gap — the one decision #1 confines to the Python/JS bou
 
 - **Control A — strict keys** (§3). `extra="forbid"` on the four authored-format models. Turns a
   silent drop into a loud refusal. This is what closes §1.
-- **Control B — `apiVersion`** (§4). An optional major-only format stamp with a supported set.
+- **Control B — `format_version`** (§4). An optional major-only format stamp with a supported set.
   Covers the one class Control A structurally cannot see: an existing key whose *meaning* changed.
 - **`ContractFormatError`** (§5). One exported exception at the `from_yaml` boundary, carrying a
   message that names the cause instead of pydantic's generic wording.
@@ -62,8 +76,8 @@ worth little without it. §8 records why.
 **Deliberately out of scope:** `source` / `sink` and the `json_schema` payload body (§7).
 
 **Unchanged:** every existing authored file, every compile target, the mode ladder, `coerce=False`,
-the R8 family check, and §4.3's major-schema-bump convention, which remains the mitigation for the
-residual in §6.
+the R8 family check, and the value-constraints spec's §4.3 major-schema-bump convention, which
+remains the mitigation for the residual in §6.
 
 ## 3. Control A — strict keys
 
@@ -125,13 +139,13 @@ exclusive rather than inclusive, the key is still known, still parses, and still
 something the author did not write. No key-set check can see this. That is what Control B is for,
 and it is the only thing Control B is for.
 
-## 4. Control B — `apiVersion`
+## 4. Control B — `format_version`
 
 An optional top-level key on `Schema` and `Contract` — **not** on `Field` or `BoundarySpec`, which
 version with the file that contains them.
 
 ```yaml
-apiVersion: v1
+format_version: v1
 schema: peec.prompts_export
 version: 2.0.0
 kind: tabular
@@ -142,7 +156,7 @@ fields:
     maximum: 1.0
 ```
 
-- **Declared as `apiVersion: str = "v1"`.** Missing defaults to `v1`, because a missing stamp can
+- **Declared as `format_version: str = "v1"`.** Missing defaults to `v1`, because a missing stamp can
   only mean "authored before stamps existed" — which *is* `v1`. No existing file breaks, and none
   needs editing.
 - **`SUPPORTED_FORMAT_VERSIONS = frozenset({"v1"})`**. A field validator rejects anything outside it,
@@ -155,7 +169,7 @@ fields:
 - **Refusal is total.** A reader that does not fully understand a file does not partially accept it.
   Partial acceptance of a schema file is precisely the weaker-form validation of §1.
 
-### 4.1 When `apiVersion` bumps
+### 4.1 When `format_version` bumps
 
 **Only on a semantic change** — an existing key whose meaning changed (§3.3). Additive changes do
 **not** bump it, because Control A already makes those loud. Under this policy `v1` should be
@@ -167,11 +181,60 @@ primary control. It is the secondary one. §8 records the version-stamp-only alt
 
 ### 4.2 Interaction with Control A
 
-The two compose without special-casing. `apiVersion` becomes a declared field, so it passes strict
+The two compose without special-casing. `format_version` becomes a declared field, so it passes strict
 keys; an unsupported *value* is rejected by the validator, not by the extra-key rule. Verified: with
-strict keys applied and `apiVersion` **not yet declared**, `apiVersion: v2` is rejected as
+strict keys applied and `format_version` **not yet declared**, `format_version: v2` is rejected as
 `extra_forbidden` — correct behavior, and the reason both controls must ship in the **same** release
 rather than across two.
+
+### 4.3 Why the key is `format_version` and not `apiVersion` *(rev.)*
+
+The first draft of this design called the key `apiVersion`, following the R10 risk row. Review caught
+it. Two independent reasons, both verified:
+
+**1. `apiVersion` is already taken, in this codebase, on the same object.**
+[`odcs.py:84`](../../../src/contract_core/compile/odcs.py#L84) emits `"apiVersion": "v3.1.0"` into
+the ODCS document, where it means *the version of the ODCS standard*. `to_odcs` takes a `Contract`
+and emits an `apiVersion` — so a `Contract.apiVersion` meaning *our authored-format version* would
+put two unrelated meanings behind one name, one function apart, with the wrong wiring
+(`"apiVersion": contract.apiVersion`) looking entirely natural.
+
+The severity is bounded, and the spec should say so rather than overstate it. `to_odcs` builds its
+dict key by key and never `model_dump()`s a model, so nothing propagates by accident today. And the
+vendored ODCS schema constrains `apiVersion` to an **enum** — verified:
+
+```
+"apiVersion": {"type": "string", "default": "v3.1.0",
+               "enum": ["v3.1.0", "v3.0.2", "v3.0.1", "v3.0.0", "v2.2.2", "v2.2.1", "v2.2.0"]}
+```
+
+`v1` is not in it, so the wrong wiring fails `validate_odcs` loudly rather than shipping a corrupt
+document. This is a **maintainability** hazard, not a latent correctness bug — but it is free to
+avoid.
+
+**2. `apiVersion` would be the only camelCase key in the format.** Every key across all four models,
+verified:
+
+```
+Schema         ['schema', 'version', 'kind', 'fields', 'json_schema']
+Contract       ['system', 'version', 'raw', 'inputs', 'outputs']
+BoundarySpec   ['name', 'schema', 'mode', 'source', 'sink']
+Field          ['name', 'type', 'required', 'nullable', 'enum', 'minimum', 'maximum', 'min_length']
+```
+
+Eighteen keys, all lowercase or snake_case. `apiVersion` is casing borrowed from ODCS and Kubernetes
+that this format never adopted. **This is the stronger of the two reasons** — it would hold even if
+`odcs.py` did not exist, because a format that is snake_case in eighteen places and camelCase in the
+nineteenth teaches authors nothing except that the rule is unreliable.
+
+`format_version` sits next to the existing `version` key without ambiguity: `version: 2.0.0` is the
+*schema's* semver, `format_version: v1` is the *format's*, and the `v` prefix keeps them visually
+distinct. The `format` key that appears inside `source`/`sink` (`{kind: file, format: csv}`) is at a
+different nesting level, in a dict nothing reads (§7).
+
+`format_version` is **not** exported to ODCS. The ODCS document has its own `apiVersion` for the ODCS
+standard; how *this* project versions its authored files is an authoring-side concern with no slot in
+a published data contract.
 
 ## 5. `ContractFormatError`
 
@@ -188,11 +251,13 @@ file-format concern. Wrapping at the model level would churn all 16 to prove not
 ### 5.2 The message, and the conditional hint
 
 The message always names the file and the specific failures. The **upgrade hint is conditional**:
-it appears only when the error set contains an `extra_forbidden` entry or an `apiVersion` rejection.
+it appears only when the error set contains an `extra_forbidden` entry or a `format_version` rejection.
 
 > Unlike every other block in this document, the two messages below are **specified, not observed** —
 > they are the target an implementer writes to, and no run produced them. The pydantic error *inputs*
-> they are rendered from were verified (§3.2); the rendering is new work.
+> they are rendered from were verified (§3.2); the rendering is new work. This makes the single most
+> user-visible deliverable in the design the least evidenced part of it, so **criterion 8 is the one
+> that has to hold** — it is what converts this prose into something that fails when it is wrong.
 
 This matters. A `min_length` on an int field is a genuine authoring error caught by the parent
 spec's §4.1 applicability rules, and telling that author to upgrade their pin would send them to
@@ -261,7 +326,7 @@ the malformed fixtures at `tests/fixtures/schemas_malformed/` exist to pin.
 ## 6. The residual — stated, not solved
 
 **Nothing in this design helps a reader already in the wild.** `0.1.0` and `0.2.0` neither forbid
-extras nor check `apiVersion`, so a `0.1.0` runtime will go on silently dropping `0.2.0`'s
+extras nor check `format_version`, so a `0.1.0` runtime will go on silently dropping `0.2.0`'s
 constraint keys forever. No change to an authored file can reach a reader that was never taught to
 look.
 
@@ -273,9 +338,10 @@ The controls for the existing gap are not code:
 1. A **minimum supported reader** statement in [`CHANGELOG.md`](../../../CHANGELOG.md) and
    [`docs/consuming-repo-setup.md`](../../consuming-repo-setup.md): consuming repos pin
    `contract-core >= 0.3.0`, and the reason is that earlier readers silently ignore constraints.
-2. **§4.3's convention holds** — a constraint rides a major *schema* bump, so a `@1`-pinned consumer
-   never resolves a file carrying keys its reader lacks. This is author discipline, not a control,
-   and it is now explicitly the compensating control for a gap code cannot reach.
+2. **The value-constraints spec's §4.3 convention holds** — a constraint rides a major *schema*
+   bump, so a `@1`-pinned consumer never resolves a file carrying keys its reader lacks. This is
+   author discipline, not a control, and it is now explicitly the compensating control for a gap
+   code cannot reach.
 
 ## 7. Deliberately out of scope
 
@@ -323,6 +389,10 @@ is also a slot people put semantics into, which reintroduces unread-but-meaningf
 shape of §1. If structured metadata is genuinely wanted later, adding a named key is the additive
 change these two controls are built to make safe.
 
+**Keeping the name `apiVersion`** and having `to_odcs` strip or translate it. Rejected: a strip step
+is code written to manage a collision that costs nothing to avoid, and it would not touch the second
+and larger objection — the casing inconsistency (§4.3). Renaming needs no code at all.
+
 **A warn-then-enforce ladder for format parsing**, mirroring `observe`/`warn`/`enforce`. Rejected
 because the ladder exists for *data*, where a warn phase buys calibration against real traffic
 before enforcing. A malformed artifact needs no calibration, and §3.1 shows the enforce-now cost is
@@ -337,7 +407,7 @@ point is that this failure stops being survivable-by-not-noticing.
 2. Each of `Schema`, `Field`, `Contract`, `BoundarySpec` rejects an unknown key at its own level.
 3. A realistic typo (`requird: true`) is rejected, rather than silently defaulting `required`.
 4. All extra keys are reported in one error, at every nesting level (§3.2), not just the first.
-5. `apiVersion` absent → parses as `v1`. `apiVersion: v1` → parses. `apiVersion: v2` →
+5. `format_version` absent → parses as `v1`. `format_version: v1` → parses. `format_version: v2` →
    `ContractFormatError` naming both the found value and the supported set.
 6. `Schema.from_yaml` and `Contract.from_yaml` raise `ContractFormatError` and never leak
    `pydantic.ValidationError` or `yaml.YAMLError`.
@@ -349,9 +419,11 @@ point is that this failure stops being survivable-by-not-noticing.
 10. `contract lint` reports the malformed fixtures as diagnostics with a clean exit path, not as
     tracebacks — the `0.2.0` behavior survives the exception-type change.
 11. `set(contract_core.__all__)` is exactly the six names of §5.3.
-12. All **186 pre-existing tests** still pass, with no edits to them and no edits to any fixture
-    (§3.1). New tests for criteria 1–11 are added alongside; the count grows, but nothing already
-    green goes red or gets rewritten to stay green.
+12. Every pre-existing test still passes, with no edits to them and no edits to any fixture (§3.1).
+    New tests for criteria 1–11 are added alongside; the count grows, but nothing already green goes
+    red or gets rewritten to stay green. **Re-baseline the count before relying on it** — `186` is a
+    reading taken on 2026-07-22 at `0.2.0`, not a constant, and any commit between then and
+    implementation moves it. The invariant is "no pre-existing test changed," not the integer.
 
 ## 10. Deliberately not built
 
@@ -360,7 +432,8 @@ point is that this failure stops being survivable-by-not-noticing.
   parent spec's §2 already declined once.
 - **Anything retroactive for `0.1.0` / `0.2.0` readers.** §6 — impossible, documented instead.
 - **`source` / `sink` schemas.** §7.
-- **A `lint` rule enforcing §4.3's major-schema-bump convention.** It is the compensating control in
+- **A `lint` rule enforcing the value-constraints spec's §4.3 major-schema-bump convention.** It is
+  the compensating control in
   §6 and enforcing it is worth doing, but it reasons about *schema* version history rather than
   format keys — a different input and a different design.
 
@@ -368,17 +441,41 @@ point is that this failure stops being survivable-by-not-noticing.
 
 | File | Change |
 |---|---|
-| `src/contract_core/schema.py` | `extra="forbid"`; `apiVersion` field + validator |
+| `src/contract_core/schema.py` | `extra="forbid"`; `format_version` field + validator |
 | `src/contract_core/types.py` | `extra="forbid"` on `Field` |
-| `src/contract_core/contract.py` | `extra="forbid"` on `Contract` + `BoundarySpec`; `apiVersion` |
+| `src/contract_core/contract.py` | `extra="forbid"` on `Contract` + `BoundarySpec`; `format_version` |
 | `src/contract_core/errors.py` | `ContractFormatError`, subclassing `ValueError` |
 | `src/contract_core/__init__.py` | export it; `__version__` → `0.3.0` |
 | `src/contract_core/cli.py` | collapse two except-arms into one; keep `OSError` |
+| `src/contract_core/compile/odcs.py` | **none** — but confirm `format_version` is not exported (§4.3) |
 | `tests/test_public_api.py` | `FROZEN_SURFACE` 5 → 6 |
 | `tests/` (new) | criteria §9 |
 | `CHANGELOG.md` | `0.3.0` entry; minimum-supported-reader statement |
 | `docs/consuming-repo-setup.md` | pin `>= 0.3.0`, and why |
 | `docs/superpowers/specs/2026-07-16-data-contract-system-design.md` | R10 row + §15 item 3, closed **with** the §6 residual |
+
+### 11.1 Propagation paths — no edit expected, and that is a conclusion *(rev.)*
+
+`ContractFormatError` now escapes from wherever `from_yaml` is called. The full set of call sites,
+enumerated rather than assumed:
+
+| Call site | Path | Expected edit |
+|---|---|---|
+| [`resolver.py:45`](../../../src/contract_core/resolver.py#L45) | exact-version resolve | none |
+| [`resolver.py:52`](../../../src/contract_core/resolver.py#L52) | major-pin glob resolve | none |
+| [`runtime.py:325`](../../../src/contract_core/runtime.py#L325) | `load_runtime` → `Contract.from_yaml` | none |
+| [`cli.py:42`](../../../src/contract_core/cli.py#L42) | `lint` → `Schema.from_yaml` | §5.4 |
+| [`cli.py:66`](../../../src/contract_core/cli.py#L66) | `Contract.from_yaml` | §5.4 |
+
+`Resolver.resolve` has **two** call sites, not one, and neither catches anything today — so a
+malformed schema reached during resolution propagates out of `load_runtime` as
+`ContractFormatError`. That is the intended public behavior (§5.3: it is catchable as `ValueError`,
+so nothing that catches broadly today breaks), which is *why* no edit is expected.
+
+"No edit needed" is a claim that has to be checked, not a row worth omitting: `resolver.py` was
+missing from the first draft of this table, and an implementer reading it would have had no signal
+that resolution is on the new exception's path at all. An implementer should confirm each row rather
+than inherit it — this table is reasoning, not a run.
 
 Release: **`0.3.0`**, minor under 0.x semantics — the public surface changed (§5.3), and per
 `CHANGELOG.md`'s own preamble a 0.x minor may carry breaking changes to the authored format.
