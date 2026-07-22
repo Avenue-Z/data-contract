@@ -65,6 +65,23 @@ except ContractViolation as exc:
 Constraints apply only to non-null values — `nullable` is the only null gate. Adding one to a schema
 is a **breaking** change and requires a major version bump.
 
+Constraints are checked for *satisfiability* when the schema loads, not only for applicability: an
+empty interval (`minimum: 5, maximum: 1`) and a no-op `min_length` (`0` or negative) are rejected the
+same way an empty `enum` is. All of them fail or admit every row while presenting as a data problem.
+
+### If you consume the ODCS export
+
+Two things changed in `0.2.0` **for every schema, including ones that did not change**:
+
+- `required` is no longer emitted. ODCS documents that key as null semantics ("may contain Null
+  values"), not presence, so this project's presence flag did not belong in it.
+- Every non-nullable field grows a `quality` rule: `{"metric": "nullValues", "mustBe": 0}`.
+
+The consequence worth planning for: **presence is not representable in the exported ODCS document.**
+A field that is `required: true, nullable: true` exports only its name and logical type. Read
+presence from the authored schema, not from exported ODCS. Regenerating ODCS for an untouched schema
+will produce a different document than `0.1.0` did.
+
 ## 3. Turning validation off
 
 Two knobs, and **"off always wins"**:

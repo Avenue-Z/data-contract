@@ -21,8 +21,12 @@ changes to the public API or the authored format. Read the entry before moving a
   A violation reports the constraint, how many rows broke it, and up to three samples.
 - Applicability is checked when the schema loads: `minimum`/`maximum` on `int`/`float`,
   `min_length` on `string`, `enum` on `string`/`int`/`bool` with values matching the
-  declared type. `contract lint` now validates **every** schema file it can see, not only
-  the ones the given contract references.
+  declared type. Satisfiability is checked too: an empty interval
+  (`minimum: 5, maximum: 1`), a `min_length` below 1, and an empty `enum` are all rejected
+  — each admits nothing or everything while reading as a constraint.
+- `contract lint` now validates **every** schema file it can see, not only the ones the
+  given contract references, and reports unparseable or unreadable files as diagnostics
+  rather than propagating a traceback.
 
 ### Changed
 
@@ -35,6 +39,25 @@ changes to the public API or the authored format. Read the entry before moving a
   semantics ("may contain Null values"), not presence, so this project's presence flag
   did not belong in it. Null tolerance is now a `nullValues` quality rule, and an `enum`
   becomes an `invalidValues` rule. Presence is not exported — ODCS has no unambiguous slot.
+- **BLAST RADIUS — the ODCS document changes for schemas that did not change.** The two
+  bullets above are not scoped to constrained fields: `required` disappears from *every*
+  property in *every* schema, and *every* non-nullable field grows a `nullValues` quality
+  rule, whether or not that schema declares a single constraint. Regenerating ODCS for an
+  untouched schema produces a different document, so a consumer diffing exported documents
+  will see churn on schemas nobody edited. Concretely, for a field
+  `{name: prompt, type: string, required: true}`:
+
+  ```diff
+  - {"name": "prompt", "logicalType": "string", "required": true}
+  + {"name": "prompt", "logicalType": "string",
+  +  "quality": [{"type": "library", "metric": "nullValues", "mustBe": 0}]}
+  ```
+
+  A field that is `required: true, nullable: true` now exports `{name, logicalType}` and
+  nothing else: null tolerance is true so no rule fires, and presence has no ODCS slot.
+  **Presence is no longer representable in the ODCS export at all** — it lives only in the
+  authored schema. If you consume presence from exported ODCS, read it from the schema
+  instead.
 
 ### Notes for consumers
 
