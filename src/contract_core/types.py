@@ -1,4 +1,5 @@
 # src/contract_core/types.py
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
@@ -64,6 +65,21 @@ class Field(BaseModel):
             raise ValueError(
                 f"field {self.name!r}: minimum {self.minimum} exceeds maximum {self.maximum}"
             )
+        if self.type == "int":
+            # A fractional bound on an integer column means the next whole number, which
+            # is not what it appears to say. An integral float (`1.0`) is unambiguous, so
+            # it is accepted — but normalised to int, or it renders "minimum=1.0" on an
+            # integer column and reintroduces the decimal by another route.
+            for slot in ("minimum", "maximum"):
+                bound = getattr(self, slot)
+                if bound is None:
+                    continue
+                if bound != int(bound):
+                    raise ValueError(
+                        f"field {self.name!r}: {slot} on an int field must be a whole "
+                        f"number, got {bound}"
+                    )
+                setattr(self, slot, int(bound))
         if self.min_length is not None and self.type != "string":
             raise ValueError(
                 f"field {self.name!r}: min_length applies to string, not {self.type!r}"
@@ -86,6 +102,19 @@ class Field(BaseModel):
                     f"field {self.name!r}: enum values {bad!r} "
                     f"do not match declared type {self.type!r}"
                 )
+            if self.minimum is not None or self.maximum is not None:
+                # Reachable only for `int`: bounds require int/float and enum requires
+                # string/int/bool. An enum disjoint from its bounds is the empty-interval
+                # error wearing a different hat — the admissible set is empty, so every
+                # non-null row fails while looking like a data problem. A PARTIAL overlap
+                # is legitimate narrowing, not an error.
+                lo = self.minimum if self.minimum is not None else -math.inf
+                hi = self.maximum if self.maximum is not None else math.inf
+                if not any(lo <= v <= hi for v in self.enum):
+                    raise ValueError(
+                        f"field {self.name!r}: no enum value satisfies the declared "
+                        f"bounds — enum {self.enum!r} against [{lo}, {hi}]"
+                    )
         return self
 
 

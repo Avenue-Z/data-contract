@@ -23,9 +23,16 @@ changes to the public API or the authored format. Read the entry before moving a
   `min_length` on `string`, `enum` on `string`/`int`/`bool` with values matching the
   declared type. A `bool` is not accepted as an `enum` value on an `int` field, nor as a
   `minimum`/`maximum` — Python treats `True` as `1`, and a bound that silently means `1`
-  is not what the author wrote. Satisfiability is checked too: an empty interval
-  (`minimum: 5, maximum: 1`), a `min_length` below 1, and an empty `enum` are all rejected
-  — each admits nothing or everything while reading as a constraint.
+  is not what the author wrote. On an `int` field a bound must be a whole number:
+  `minimum: 0.5` is rejected (it means `1`, which is not what it says), while an integral
+  `minimum: 1.0` is accepted and stored as `1`.
+- Satisfiability is checked, not just applicability. Five ways to author a constraint that
+  can never do what it appears to say are now rejected at load rather than failing every
+  row at runtime: an empty `enum`, an empty interval (`minimum: 5, maximum: 1`), a
+  `min_length` below 1, an `enum` disjoint from its own bounds
+  (`enum: [0, 1]` with `minimum: 5`), and the `bool` and fractional-bound cases above. A
+  *partial* overlap between an `enum` and its bounds is legitimate narrowing, not an error.
+  This list is exhaustive — there is no general satisfiability solver behind it.
 - `contract lint` now validates **every** schema file it can see, not only the ones the
   given contract references, and reports unparseable or unreadable files as diagnostics
   rather than propagating a traceback.

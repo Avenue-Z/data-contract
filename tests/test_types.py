@@ -134,3 +134,39 @@ def test_numeric_bounds_still_accept_zero_and_negatives():
     assert Field(name="a", type="int", minimum=0).minimum == 0
     assert Field(name="b", type="float", minimum=0.0, maximum=0.0).maximum == 0.0
     assert Field(name="c", type="float", minimum=-2.5).minimum == -2.5
+
+
+def test_an_enum_disjoint_from_its_bounds_is_rejected():
+    # Round-1 row 2. Same class as the empty interval: the admissible set is empty, so
+    # every non-null row fails while presenting to the operator as a data problem.
+    with pytest.raises(ValidationError, match="no enum value satisfies"):
+        Field(name="is_owned", type="int", enum=[0, 1], minimum=5)
+    with pytest.raises(ValidationError, match="no enum value satisfies"):
+        Field(name="is_owned", type="int", enum=[5, 6], maximum=1)
+
+
+def test_an_enum_partially_inside_its_bounds_is_allowed():
+    # Narrowing is legitimate authoring, not an error: only an EMPTY intersection is.
+    f = Field(name="rank", type="int", enum=[1, 5, 9], minimum=5)
+    assert f.enum == [1, 5, 9]
+
+
+def test_a_fractional_bound_on_an_int_field_is_rejected():
+    # `minimum: 0.5` on an integer column means 1. Saying so explicitly beats having the
+    # reader work out that the bound is off-by-a-half from what it appears to say.
+    with pytest.raises(ValidationError, match="must be a whole number"):
+        Field(name="position", type="int", minimum=0.5)
+    with pytest.raises(ValidationError, match="must be a whole number"):
+        Field(name="position", type="int", maximum=1.5)
+
+
+def test_an_integral_float_bound_on_an_int_field_normalises_to_int():
+    # `minimum: 1.0` is unambiguous, so it is accepted — but stored as int, or it renders
+    # "minimum=1.0" on an integer column and reintroduces the decimal by another route.
+    f = Field(name="position", type="int", minimum=1.0, maximum=10.0)
+    assert (f.minimum, f.maximum) == (1, 10)
+    assert isinstance(f.minimum, int) and isinstance(f.maximum, int)
+
+
+def test_a_fractional_bound_on_a_float_field_is_fine():
+    assert Field(name="sentiment", type="float", minimum=-0.5).minimum == -0.5
