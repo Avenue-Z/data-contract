@@ -28,8 +28,12 @@ class Field(BaseModel):
     nullable: bool = False
     # Value constraints (design §4). All optional: every pre-existing schema stays valid.
     enum: list[Any] | None = None
-    minimum: float | None = None
-    maximum: float | None = None
+    # `int | float`, not `float`: a plain `float` coerces `minimum: 1` on an int field to
+    # 1.0, and that mangling reaches the operator message, the JSON Schema `minimum`
+    # keyword and ODCS `logicalTypeOptions` alike. Pydantic's smart union preserves the
+    # authored type, so an int bound stays an int.
+    minimum: int | float | None = None
+    maximum: int | float | None = None
     min_length: int | None = None
 
     @model_validator(mode="after")
@@ -39,9 +43,21 @@ class Field(BaseModel):
             raise ValueError(
                 f"field {self.name!r}: minimum/maximum apply to int/float, not {self.type!r}"
             )
+        if self.minimum is not None and self.maximum is not None \
+                and self.minimum > self.maximum:
+            # An empty interval is the same authoring error as an empty enum: it admits
+            # no value, so it fails every non-null row while looking like a data problem.
+            raise ValueError(
+                f"field {self.name!r}: minimum {self.minimum} exceeds maximum {self.maximum}"
+            )
         if self.min_length is not None and self.type != "string":
             raise ValueError(
                 f"field {self.name!r}: min_length applies to string, not {self.type!r}"
+            )
+        if self.min_length is not None and self.min_length < 1:
+            # 0 and negatives admit every string: a no-op that reads as a constraint.
+            raise ValueError(
+                f"field {self.name!r}: min_length must be >= 1, got {self.min_length}"
             )
         if self.enum is not None:
             if self.type not in _ENUM_TYPES:

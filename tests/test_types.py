@@ -80,3 +80,40 @@ def test_enum_is_accepted_on_int_string_and_bool():
     assert Field(name="a", type="int", enum=[0, 1]).enum == [0, 1]
     assert Field(name="b", type="string", enum=["x"]).enum == ["x"]
     assert Field(name="c", type="bool", enum=[True]).enum == [True]
+
+
+# ---- satisfiability, not just applicability ----
+
+def test_an_empty_interval_is_rejected():
+    # Same class of error as an empty enum, and the same reasoning: a constraint that
+    # cannot admit any value fails 100% of rows while presenting to the operator as a
+    # data problem. That is the failure this validator exists to prevent.
+    with pytest.raises(ValidationError, match="minimum 5.* exceeds maximum 1"):
+        Field(name="position", type="int", minimum=5, maximum=1)
+
+
+def test_a_degenerate_interval_is_allowed():
+    # minimum == maximum admits exactly one value. Narrow, but satisfiable and meaningful.
+    f = Field(name="k", type="int", minimum=3, maximum=3)
+    assert (f.minimum, f.maximum) == (3, 3)
+
+
+def test_min_length_below_one_is_rejected():
+    # `min_length: 0` and `min_length: -1` admit every string, so they are no-ops that
+    # read as constraints — the author meant something and got nothing.
+    for bad in (0, -1):
+        with pytest.raises(ValidationError, match="min_length must be >= 1"):
+            Field(name="brand", type="string", min_length=bad)
+
+
+def test_an_int_bound_stays_an_int():
+    # `float` would store 1.0 and render "minimum=1.0" on an integer column, to the
+    # operator, to JSON Schema and to ODCS alike.
+    f = Field(name="position", type="int", minimum=1)
+    assert f.minimum == 1
+    assert isinstance(f.minimum, int)
+
+
+def test_a_float_bound_stays_a_float():
+    f = Field(name="sentiment", type="float", minimum=-1.0)
+    assert isinstance(f.minimum, float)
