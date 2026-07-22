@@ -1,6 +1,6 @@
 # Versioning the authored format — strict keys first, `format_version` second
 
-**Status:** designed 2026-07-22, **revised once after review (2026-07-22)**, unimplemented.
+**Status:** designed 2026-07-22, **revised twice after review (2026-07-22 ×2)**, unimplemented.
 **Closes:** R10, with a stated residual (§6). Does not close it silently.
 **Parent spec:** [2026-07-16-data-contract-system-design.md](2026-07-16-data-contract-system-design.md)
 — read R10 in §14, §15 item 3, decision #1 (Portable Core), and R6.
@@ -25,6 +25,20 @@ whose major-schema-bump convention is the only thing standing in for this design
 > because "does this name already mean something else in this repo?" and "what else calls this
 > function?" are grep questions, not runtime questions. **An evidence discipline aimed only at
 > execution will pass a design that collides with the codebase it is being added to.**
+>
+> **Revision 2** found the third distinct class: a control specified only in the direction it will
+> rarely run. `SUPPORTED_FORMAT_VERSIONS` and "refusal is total" described how a reader *rejects* a
+> version, and the document never said how one *accepts two* — which is the only path Control B ever
+> actually takes, since the refusal exists to be rare. §4.4 now specifies it, and rejects the
+> obvious reading (branch on the changed key) in favour of normalizing on read. Marked *(rev. 2)*.
+> Revision 2 also promoted §4.3's ODCS non-export from an unchecked assertion to criterion 13 — the
+> preamble's own defect, relocated from behavior to policy and surviving two rounds inside the
+> section that diagnoses it.
+>
+> Generalizing across all three: rev. 1's lesson was that running the code does not check names or
+> call sites. Rev. 2's is narrower and sharper — **verification pressure lands on the paths a design
+> describes, so the gap opens where it describes nothing at all.** Every claim in §4 was verified;
+> the accept path had no claim to verify, and so nothing pointed at it.
 
 ## 1. The problem
 
@@ -179,13 +193,17 @@ Control B is a fire escape, and a fire escape that is never used is working.
 This is the load-bearing difference from the R10 risk row, which implies a version stamp is the
 primary control. It is the secondary one. §8 records the version-stamp-only alternative.
 
+What happens *when* it bumps — how a reader accepts two versions at once — is §4.4. That is the half
+of Control B that actually gets exercised, and specifying only the refusal would leave the control
+half-designed.
+
 ### 4.2 Interaction with Control A
 
-The two compose without special-casing. `format_version` becomes a declared field, so it passes strict
-keys; an unsupported *value* is rejected by the validator, not by the extra-key rule. Verified: with
-strict keys applied and `format_version` **not yet declared**, `format_version: v2` is rejected as
-`extra_forbidden` — correct behavior, and the reason both controls must ship in the **same** release
-rather than across two.
+The two compose without special-casing. `format_version` becomes a declared field, so it passes
+strict keys; an unsupported *value* is rejected by the validator, not by the extra-key rule.
+Verified: with strict keys applied and `format_version` **not yet declared**, `format_version: v2`
+is rejected as `extra_forbidden` — correct behavior, and the reason both controls must ship in the
+**same** release rather than across two.
 
 ### 4.3 Why the key is `format_version` and not `apiVersion` *(rev.)*
 
@@ -236,12 +254,58 @@ different nesting level, in a dict nothing reads (§7).
 standard; how *this* project versions its authored files is an authoring-side concern with no slot in
 a published data contract.
 
+### 4.4 The accept path — normalize on read, do not branch on use *(rev. 2)*
+
+`SUPPORTED_FORMAT_VERSIONS` and "refusal is total" fully specify how a reader *rejects* a version.
+Review caught that the design never said how a reader *accepts two* — which is the only path Control
+B will ever actually run, since the refusal path exists to be rare.
+
+**A reader supports every version it understands: `{"v1", "v2"}`, not `{"v2"}`.** Narrowing the set
+to the newest version alone would break every file in production simultaneously, which is the loud
+total break §1 calls survivable but which nobody would have planned for. Support is additive.
+
+**The upcast happens on the raw dict, in `from_yaml`, before `model_validate`.** A tiny step reads
+`format_version` off the parsed YAML, applies one function per version step (`_v1_to_v2`), and hands
+the current-format dict to the model. **The models only ever implement the newest format.**
+
+This is where the design differs from the obvious reading of "support two versions." The alternative
+— keep both meanings live in the model and branch at the changed key — is worse in a way that
+compounds:
+
+- `Field` does not know which file it came from, so a version-conditional `nullable` would have to be
+  threaded down from `Schema` into every field, and from there into all three compile targets.
+- Version conditionals inside models are never removable. Every `if v1 else v2` is permanent, and
+  they accumulate at exactly the rate the format evolves.
+- Every consumer of a model attribute would have to know the format version to interpret it — which
+  is the weaker-form problem of §1 wearing a different hat, since a consumer that forgets to check
+  reads a v1 value as if it were v2.
+
+Normalize-on-read has none of these. The version-specific logic lives in one function, in one file,
+and a reader's model code is single-version forever. It composes with Control A for free: the upcast
+runs *before* strict keys, so a key that v2 renames or drops is already gone by the time
+`extra="forbid"` sees the dict.
+
+**Dropping a version from the set is a separate, announced break.** It requires its own CHANGELOG
+entry and its own version bump, and it is the only event that forces authored files to actually be
+edited. That — not the introduction of `v2` — is the moment a file-rewriting migration tool would
+earn its keep (§10).
+
+This section is policy, not implementation: there is no `v2`, so there is no `_v1_to_v2` to write.
+What it fixes is that an implementer arriving at the first semantic change would otherwise have had
+to invent the accept path under time pressure, with a production break as the cost of choosing wrong.
+
 ## 5. `ContractFormatError`
 
 ### 5.1 Where it is raised
 
 **Only at the `from_yaml` boundary** of `Schema` and `Contract`. It wraps `pydantic.ValidationError`
 and `yaml.YAMLError`. It does **not** wrap `OSError` — an unreadable file is not a malformed one.
+
+The wrapped region is the whole of `from_yaml`, which under §4.4 is *read YAML → upcast → validate*.
+So when an upcast eventually exists, its failures are `ContractFormatError` too — a file that cannot
+be carried forward to the current format is a malformed file from the caller's side, and splitting
+that into a second exception type would make consumers handle two errors that need the same
+response.
 
 Direct model construction (`Field(name=..., type=...)`) keeps raising `ValidationError` unchanged.
 This is deliberate and it is why the boundary is drawn here: `tests/test_types.py` asserts
@@ -407,8 +471,12 @@ point is that this failure stops being survivable-by-not-noticing.
 2. Each of `Schema`, `Field`, `Contract`, `BoundarySpec` rejects an unknown key at its own level.
 3. A realistic typo (`requird: true`) is rejected, rather than silently defaulting `required`.
 4. All extra keys are reported in one error, at every nesting level (§3.2), not just the first.
-5. `format_version` absent → parses as `v1`. `format_version: v1` → parses. `format_version: v2` →
-   `ContractFormatError` naming both the found value and the supported set.
+5. **Through `from_yaml`**: `format_version` absent → parses as `v1`; `format_version: v1` → parses;
+   `format_version: v2` → `ContractFormatError` naming both the found value and the supported set.
+   The entry path is named because §5.1 draws the wrapping boundary there and nowhere else —
+   `Schema(format_version="v2")` constructed directly still raises `ValidationError`, exactly as
+   criterion 9 requires for `Field`. An implementer who wraps at the validator instead satisfies
+   this criterion and breaks that one.
 6. `Schema.from_yaml` and `Contract.from_yaml` raise `ContractFormatError` and never leak
    `pydantic.ValidationError` or `yaml.YAMLError`.
 7. `ContractFormatError` is catchable as `ValueError`, and is **not** a `ContractViolation`.
@@ -424,18 +492,36 @@ point is that this failure stops being survivable-by-not-noticing.
     red or gets rewritten to stay green. **Re-baseline the count before relying on it** — `186` is a
     reading taken on 2026-07-22 at `0.2.0`, not a constant, and any commit between then and
     implementation moves it. The invariant is "no pre-existing test changed," not the integer.
+13. `format_version` does **not** appear in the ODCS export (§4.3, last paragraph). The enforcement
+    for this is **pre-existing, not new work**: the vendored ODCS schema sets both
+    `additionalProperties: false` and `unevaluatedProperties: false` at top level, and
+    `tests/test_compile_odcs.py` already runs `validate_odcs` over real compile output at **nine**
+    call sites. Verified against the vendored schema:
+
+    ```
+    validate_odcs(doc | {"format_version": "v1"})
+      -> jsonschema.ValidationError: Additional properties are not allowed
+         ('format_version' was unexpected)
+    ```
+
+    A leak fails the existing suite the moment it is introduced. This was a §11 "confirm" row in
+    rev. 1 — a claim with no check, which is the defect class this document's own preamble
+    diagnoses, relocated from behavior to policy.
 
 ## 10. Deliberately not built
 
-- **A migration tool.** With `v1` the only format version, there is nothing to migrate between.
-  Building the migrator before the migration is the extension-point-with-no-caller mistake the
-  parent spec's §2 already declined once.
+- **A migration tool**, and **`_v1_to_v2` itself.** With `v1` the only format version there is
+  nothing to migrate between, and building the migrator before the migration is the
+  extension-point-with-no-caller mistake the parent spec's §2 already declined once. §4.4 settles
+  *where* an upcast will live and *what shape* it takes without writing one — policy is free, code
+  is not. Note that §4.4's in-memory upcast never rewrites a file; a **file-rewriting** tool becomes
+  interesting only when a version is dropped from the supported set, which is a separate announced
+  break.
 - **Anything retroactive for `0.1.0` / `0.2.0` readers.** §6 — impossible, documented instead.
 - **`source` / `sink` schemas.** §7.
 - **A `lint` rule enforcing the value-constraints spec's §4.3 major-schema-bump convention.** It is
-  the compensating control in
-  §6 and enforcing it is worth doing, but it reasons about *schema* version history rather than
-  format keys — a different input and a different design.
+  the compensating control in §6 and enforcing it is worth doing, but it reasons about *schema*
+  version history rather than format keys — a different input and a different design.
 
 ## 11. Edit sites
 
@@ -447,7 +533,7 @@ point is that this failure stops being survivable-by-not-noticing.
 | `src/contract_core/errors.py` | `ContractFormatError`, subclassing `ValueError` |
 | `src/contract_core/__init__.py` | export it; `__version__` → `0.3.0` |
 | `src/contract_core/cli.py` | collapse two except-arms into one; keep `OSError` |
-| `src/contract_core/compile/odcs.py` | **none** — but confirm `format_version` is not exported (§4.3) |
+| `src/contract_core/compile/odcs.py` | **none** — non-export is criterion 13, already enforced |
 | `tests/test_public_api.py` | `FROZEN_SURFACE` 5 → 6 |
 | `tests/` (new) | criteria §9 |
 | `CHANGELOG.md` | `0.3.0` entry; minimum-supported-reader statement |
