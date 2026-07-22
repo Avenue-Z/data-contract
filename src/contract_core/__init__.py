@@ -12,7 +12,7 @@ past this package for them is not supported either. The CLI is invoked through t
 from contract_core.errors import ContractViolation, FieldDiff
 from contract_core.runtime import ContractRuntime, load_runtime
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ContractRuntime",

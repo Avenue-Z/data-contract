@@ -50,6 +50,50 @@ def load_prompts():
 will be called out as a **behavior** change in [`CHANGELOG.md`](../CHANGELOG.md) — a stable signature
 is not a promise of stable resolved bytes.
 
+### Value constraints
+
+A schema field may declare `enum`, `minimum`, `maximum`, or `min_length`. They are enforced at the
+boundary alongside presence and type, and a violation raises `ContractViolation` under `enforce`:
+
+```python
+except ContractViolation as exc:
+    for d in exc.diffs:
+        if d.problem == "value":
+            print(d.field, d.constraint, d.violating_rows, d.samples)
+```
+
+Constraints apply only to non-null values — `nullable` is the only null gate. Adding one to a schema
+is a **breaking** change and requires a major version bump.
+
+Constraints are checked for *satisfiability* when the schema loads, not only for applicability. These
+are rejected outright, because each one fails or admits every row while reading as a real constraint:
+
+| Authored | Why it is rejected |
+| --- | --- |
+| `enum: []` | admits nothing |
+| `minimum: 5, maximum: 1` | empty interval — admits nothing |
+| `enum: [0, 1]` with `minimum: 5` | enum disjoint from its bounds — admits nothing |
+| `min_length: 0` or negative | admits everything; a no-op that reads as a constraint |
+| `minimum: true` | Python treats `True` as `1`; a bound meaning `1` should say `1` |
+| `minimum: 0.5` on an `int` field | means `1` on an integer column, but does not say so |
+
+A *partial* overlap between an `enum` and its bounds (`enum: [1, 5, 9]` with `minimum: 5`) is
+legitimate narrowing and is accepted. The list above is exhaustive — there is no general
+satisfiability solver behind it.
+
+### If you consume the ODCS export
+
+Two things changed in `0.2.0` **for every schema, including ones that did not change**:
+
+- `required` is no longer emitted. ODCS documents that key as null semantics ("may contain Null
+  values"), not presence, so this project's presence flag did not belong in it.
+- Every non-nullable field grows a `quality` rule: `{"metric": "nullValues", "mustBe": 0}`.
+
+The consequence worth planning for: **presence is not representable in the exported ODCS document.**
+A field that is `required: true, nullable: true` exports only its name and logical type. Read
+presence from the authored schema, not from exported ODCS. Regenerating ODCS for an untouched schema
+will produce a different document than `0.1.0` did.
+
 ## 3. Turning validation off
 
 Two knobs, and **"off always wins"**:
