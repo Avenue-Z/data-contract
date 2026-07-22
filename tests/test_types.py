@@ -117,3 +117,20 @@ def test_an_int_bound_stays_an_int():
 def test_a_float_bound_stays_a_float():
     f = Field(name="sentiment", type="float", minimum=-1.0)
     assert isinstance(f.minimum, float)
+
+
+def test_a_bool_is_not_a_number_for_bound_purposes():
+    # The same trap `_value_matches_type` guards for enum, on the other constraint:
+    # `int | float` smart-unions True to 1, so `minimum: true` silently means `minimum: 1`.
+    # One guarded and one not, in one file, is worse than neither.
+    with pytest.raises(ValidationError, match="minimum must be a number, not a bool"):
+        Field(name="rank", type="int", minimum=True)
+    with pytest.raises(ValidationError, match="maximum must be a number, not a bool"):
+        Field(name="rank", type="int", maximum=False)
+
+
+def test_numeric_bounds_still_accept_zero_and_negatives():
+    # The bool guard must key on type, not falsiness: 0 and 0.0 are legitimate bounds.
+    assert Field(name="a", type="int", minimum=0).minimum == 0
+    assert Field(name="b", type="float", minimum=0.0, maximum=0.0).maximum == 0.0
+    assert Field(name="c", type="float", minimum=-2.5).minimum == -2.5

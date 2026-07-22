@@ -21,7 +21,9 @@ changes to the public API or the authored format. Read the entry before moving a
   A violation reports the constraint, how many rows broke it, and up to three samples.
 - Applicability is checked when the schema loads: `minimum`/`maximum` on `int`/`float`,
   `min_length` on `string`, `enum` on `string`/`int`/`bool` with values matching the
-  declared type. Satisfiability is checked too: an empty interval
+  declared type. A `bool` is not accepted as an `enum` value on an `int` field, nor as a
+  `minimum`/`maximum` — Python treats `True` as `1`, and a bound that silently means `1`
+  is not what the author wrote. Satisfiability is checked too: an empty interval
   (`minimum: 5, maximum: 1`), a `min_length` below 1, and an empty `enum` are all rejected
   — each admits nothing or everything while reading as a constraint.
 - `contract lint` now validates **every** schema file it can see, not only the ones the

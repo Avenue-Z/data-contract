@@ -56,7 +56,7 @@ def test_lint_does_not_raise_a_traceback_on_a_malformed_schema():
 
 
 def test_lint_ignores_non_semver_files_like_latest_yaml():
-    # `_parse_semver` returns None rather than raising SPECIFICALLY so the major-pin glob
+    # `parse_semver` returns None rather than raising SPECIFICALLY so the major-pin glob
     # skips latest.yaml and _template.yaml. Linting every *.yaml would turn a deliberate
     # accommodation into a failure (design §4.1.1).
     names = {p.name for p in _lintable_schema_files([str(FIX / "schemas")])}

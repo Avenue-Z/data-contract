@@ -1,7 +1,7 @@
 # src/contract_core/types.py
 from typing import Any, Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
 FieldType = Literal["string", "int", "float", "bool", "date", "datetime"]
 
@@ -35,6 +35,20 @@ class Field(BaseModel):
     minimum: int | float | None = None
     maximum: int | float | None = None
     min_length: int | None = None
+
+    @field_validator("minimum", "maximum", mode="before")
+    @classmethod
+    def _bound_is_not_a_bool(cls, v: Any, info: ValidationInfo) -> Any:
+        # Must run `mode="before"`: `int | float` smart-unions True to 1, so by the time
+        # the model validator sees it, `minimum: true` is indistinguishable from
+        # `minimum: 1`. Same trap `_value_matches_type` already refuses for enum — one
+        # guarded and one not, in one file, is worse than neither.
+        if isinstance(v, bool):
+            raise ValueError(
+                f"field {info.data.get('name')!r}: "
+                f"{info.field_name} must be a number, not a bool"
+            )
+        return v
 
     @model_validator(mode="after")
     def _constraints_match_the_declared_type(self) -> "Field":
