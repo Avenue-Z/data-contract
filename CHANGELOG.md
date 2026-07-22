@@ -11,7 +11,7 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
-## [0.2.0] — unreleased, pending tag
+## [0.2.0] — 2026-07-22
 
 ### Added
 
