@@ -62,3 +62,15 @@ def test_lint_ignores_non_semver_files_like_latest_yaml():
     names = {p.name for p in _lintable_schema_files([str(FIX / "schemas")])}
     assert "latest.yaml" not in names
     assert "1.0.0.yaml" in names
+
+
+def test_lint_reports_unparseable_yaml_instead_of_crashing():
+    # Task 8 widened lint from "schemas the contract references" to "every schema file
+    # under every --schemas root", so it now opens files nobody has ever validated.
+    # `Schema.from_yaml` runs yaml.safe_load before model_validate: a syntax error raises
+    # yaml.YAMLError, never ValidationError. Catching only the latter produced exit 1 with
+    # EMPTY stdout and a ParserError traceback.
+    result = _lint_with_malformed()
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "4.0.0" in result.output
+    assert "LINT FAILED" in result.output
