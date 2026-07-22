@@ -1,6 +1,6 @@
 # Value constraints — declarative, portable, at the boundary
 
-**Status:** designed 2026-07-21, **revised 2026-07-21 after review**, unimplemented.
+**Status:** designed 2026-07-21, **revised twice after review (2026-07-21, 2026-07-22)**, unimplemented.
 **Closes:** most of §15 item 4 (the value-check enrichment gap). Narrows what remains of it.
 **Parent spec:** [2026-07-16-data-contract-system-design.md](2026-07-16-data-contract-system-design.md)
 — read decision #1 (Portable Core), decision #2 (inputs open / outputs complete), §4.1, §5.2, §9.
@@ -8,8 +8,14 @@
 > **Revision note.** The first draft's intent survived review; five of its mechanical claims did not.
 > They are corrected here and marked *(rev.)* where the correction changes what an implementer does.
 > The pattern in all five: the design asserted how a library or this codebase behaves without running
-> it. Every behavioral claim below has now been executed. Where one still rests on a dependency's
-> default, it says so and pins it explicitly.
+> it.
+>
+> **Revision 2** found two more of exactly that class, both in material revision 1 *added* — §5.4's
+> ODCS mapping (read off the vendored schema's keyword list, never composed into a document and
+> validated) and §5.2.1's drop rule (specified without checking what a value check does against a
+> wrong dtype). Marked *(rev. 2)*. Revision 1 claimed "every behavioral claim below has now been
+> executed" and that claim was itself unverified. Every table of results in this document is now
+> pasted from a run.
 
 ## 1. The problem
 
@@ -25,7 +31,9 @@ values are silent.
 
 **Ships:** four declarative constraints — `enum`, `minimum`, `maximum`, `min_length` — authored on a
 field, compiled to **all three** targets (Pandera, JSON Schema, ODCS), enforced through the existing
-mode ladder.
+mode ladder. The three targets do not all express them the same way: in ODCS the bounds are
+`logicalTypeOptions` while `enum` is a `quality` rule, because ODCS has no `enum` option and emitting
+one *fails* `contract lint` (§5.4).
 
 **Also ships, because the feature is incoherent without them:**
 
@@ -60,8 +68,11 @@ The line as it should read:
   custom validators. These cannot cross the language boundary. This is the principle's real content.
 
 `pattern` belongs on the portable side of that line by the same argument. It is **not shipped here**
-(§2) — portability and scope are separate questions, and nothing in the four driving examples needs
-it.
+(§2), but *not* on the grounds that no driving example needs it — that argument does not survive
+contact with the fourth example *(rev. 2)*. `min_length: 1` is a length floor, not a non-blank check:
+verified, a two-space `brand` has length 2 and passes. So "empty `brand`" is only **partially**
+covered, and closing it fully needs `pattern`. `pattern` is deferred on scope alone, and the residual
+gap is recorded in §10 rather than argued away.
 
 ## 4. Authored format
 
@@ -103,6 +114,12 @@ on an `int` field matches **nothing**, failing every row while looking like a da
 Supporting dates means first deciding a single wire encoding for constraint literals across all three
 targets. That is a real design task, not an oversight, and it is deferred (§10).
 
+**The third target disagrees too** *(rev. 2)*, which makes the deferral better-founded than the row
+above states. In the vendored ODCS schema, `minimum` under the **`date`** branch is typed
+`{"type": "string"}` while under the **`number`** branch it is `{"type": "number"}`. So a date bound
+is an ISO string in JSON Schema, an ISO string in ODCS, and a `Timestamp` in pandas — three targets,
+two encodings, and the conversion has to be decided rather than inferred.
+
 #### 4.1.1 `lint` cannot catch these today — so this design fixes it *(rev.)*
 
 The first draft said applicability errors "fail at `Schema.from_yaml`, so `contract lint` rejects
@@ -117,9 +134,15 @@ And in production the failure lands at **decoration time** — `_decorator` reso
 the decorator is applied, which is module import. An authoring typo therefore crashes at import: the
 exact failure class R9 and §15 item 7 spent effort removing.
 
-So this design includes a scoped `lint` change: walk and validate **every** schema file under the
-given schema dirs, not only referenced ones, and catch `ValidationError` into the `LINT FAILED`
-report alongside `SchemaNotFound`.
+So this design includes a scoped `lint` change: walk and validate the schema files under the given
+schema dirs, not only referenced ones, and catch `ValidationError` into the `LINT FAILED` report
+alongside `SchemaNotFound`.
+
+**Scope the walk to files the resolver would consider** *(rev. 2)* — stems that `_parse_semver`
+parses. That helper returns `None` rather than raising *specifically* so the major-pin glob skips
+strays like `latest.yaml` and `_template.yaml`, and its docstring says so. Linting every `*.yaml`
+would turn a deliberate accommodation into a failure, making a template file a lint error. If
+template files should be valid schemas, that is a separate decision and not one this design makes.
 
 Residual, stated rather than hidden: `lint` in CI is the control. A repo that skips `lint` still gets
 an import-time crash from a malformed constraint. Making resolution lazy is a larger change and is
@@ -228,17 +251,49 @@ carries checks' identity out-of-band rather than parsing it back out.
    ordering. Confirmed in review: with the dtype row sorted after the value row, the value diff is
    the one thrown away.
 
-So this design replaces the de-dup with aggregation:
+So this design replaces the de-dup with aggregation. **The order of these steps is part of the
+spec** — see §5.2.2:
 
-- Group failure cases by `(field, check)`; emit **one** `FieldDiff` per group, carrying the row count
-  and up to three sample values.
-- **Structural diffs keep collapsing per field** — "column missing" twice is noise. **Value diffs do
-  not collapse across different constraints**, because `minimum` and `maximum` on one field are two
-  distinct facts an operator needs.
-- When a field has both a dtype-family failure and a value failure, the **dtype diff wins and the
-  value diffs are dropped** — deliberately, and it must be a documented rule rather than an ordering
-  accident. A column of the wrong type will fail every value check on it, and reporting "sentiment is
-  a string" *and* "sentiment violates maximum=1.0" buries the cause under its own consequence.
+1. **Extract the field name**, then **apply the dtype-drop rule** (§5.2.2).
+2. **Group** the surviving failure cases by `(field, check)`; emit **one** `FieldDiff` per group,
+   carrying the row count and up to three sample values.
+3. **Structural diffs keep collapsing per field** — "column missing" twice is noise. **Value diffs do
+   not collapse across different constraints**, because `minimum` and `maximum` on one field are two
+   distinct facts an operator needs.
+
+**Group on the resolved field name, not the raw frame column.** For `column_in_dataframe` the field
+name lives in `failure_case` and `column` is `NaN`; the existing loop already handles that split.
+Keying the group-by on the raw `column` would put every missing column in one `NaN` bucket.
+
+#### 5.2.2 The dtype-drop rule is mandatory, and needs a fourth edit site *(rev. 2)*
+
+When a field has both a dtype-family failure and a value failure, the **dtype diff wins and the value
+diffs are dropped**. Revision 1 called this a tidiness rule. It is not — it is required for
+correctness, and the reason is worse than "noise".
+
+A value check on a wrong-typed column does not return `False`; it **raises**, and pandera captures
+the exception as the failure case. Executed, declaring `float` and passing strings:
+
+```
+check='column dtype does not satisfy...'   failure_case='False'
+check='minimum'   failure_case='TypeError("\'>=\' not supported between instances of ...")'
+check='maximum'   failure_case='TypeError("\'<=\' not supported between instances of ...")'
+```
+
+Without the drop rule a `ContractViolation` reports `violating_rows: 1` and
+`samples: ["TypeError(\"'>=' not supported between instances of 'str' and 'float'\")"]` — a Python
+exception repr presented to an operator as a sample of their data.
+
+**This is why the rule must run before aggregation** (§5.2.1 step 1): grouping first computes counts
+and samples off `TypeError` reprs, then discards them, which is the same wasted-and-wrong work in a
+different order.
+
+**And it requires a fourth edit site.** Implementing "did the dtype check fail for this field?" means
+recognizing the family check's row, and `_family_check` currently sets `error=` to a prose sentence.
+§5.2 mandates `error="<constraint>"` for the four new checks; **`_family_check` must be changed to a
+machine-recognizable `error="dtype_family:<type>"` too.** Without it, §5.2.1 and criterion 7 are
+unbuildable. This is safe: the prose currently reaches only pandera's own exception text, while
+`ContractViolation` renders its own message.
 
 ### 5.3 Payload boundaries — the branch is built *(rev.)*
 
@@ -254,18 +309,56 @@ Payload errors are per-document, not per-row, so `violating_rows` is `None` ther
 the offending value. A constraint that enforces on tabular boundaries and silently no-ops on payload
 ones is worse than one that does not exist.
 
-### 5.4 ODCS — the third target *(rev.)*
+### 5.4 ODCS — the third target, and `enum` does not go where the bounds go *(rev. 2)*
 
-`compile/odcs.py` exists and `contract lint` compiles to ODCS and validates it, so ODCS is a real
-target the first draft never mentioned. `_schema_block` emits `name` / `logicalType` / `required`
-only — it drops `nullable` today, and would drop every constraint.
+`compile/odcs.py` exists and `contract lint` compiles to ODCS and validates it **unconditionally**,
+so ODCS is a real target the first draft never mentioned. `_schema_block` emits `name` /
+`logicalType` / `required` only — it drops `nullable` today, and would drop every constraint.
 
 That matters more than the other two: the ODCS document is the artifact that actually **leaves the
 Python process**. §3 cannot claim portability while the exported artifact carries none of it.
 
-The vendored ODCS v3.1.0 schema supports these under **`logicalTypeOptions`** — it defines
-`minimum`, `maximum`, `minLength`, `exclusiveMinimum`, and `pattern`. So `_schema_block` gains a
-`logicalTypeOptions` block per constrained field.
+**`logicalTypeOptions` is not a free-form bag.** Revision 1 read the keyword list off the vendored
+schema and never composed a document. It is type-scoped through an `allOf` / `if`-`then` chain keyed
+on `logicalType`, and every typed branch sets `additionalProperties: false`. Executed against
+`validate_odcs`:
+
+| Emitted | Result |
+| --- | --- |
+| `number` + `minimum`/`maximum` | OK |
+| `integer` + `minimum` | OK |
+| `string` + `minLength` | OK |
+| **`enum` on string / integer / number** | **FAIL** — `Additional properties are not allowed ('enum' was unexpected)` |
+| `enum` on **boolean** | "OK" — **vacuously**, see below |
+
+So emitting `enum` into `logicalTypeOptions` would not degrade the export; it would make
+`contract lint` **fail** on the very example that motivated this design (`is_owned ∈ {0, 1}`).
+
+**The boolean pass is the dangerous result, not the reassuring one.** There is no `boolean` branch in
+the chain, so no `if` fires and `logicalTypeOptions` falls back to its bare definition,
+`{"type": "object"}`. Verified: `{"totally_made_up": "anything"}` on a boolean field also validates.
+`_ODCS_LOGICAL` maps `bool → "boolean"`, and §4.1 permits `enum` on `bool`, so that path would emit
+unvalidated content no ODCS consumer has a rule for, under a green test.
+
+**Rule: never emit `logicalTypeOptions` for a `logicalType` with no branch in the chain.** A
+key that validates because nothing checked it is worse than one that fails.
+
+#### 5.4.1 The mapping, as verified
+
+- **`minimum` / `maximum` / `min_length` → `logicalTypeOptions`** on `number` / `integer` / `string`.
+- **`enum` → a `quality` rule**, which is ODCS's actual home for an allowed-value set:
+
+```json
+{"type": "library", "metric": "invalidValues",
+ "arguments": {"validValues": [0, 1]}, "mustBe": 0}
+```
+
+Read as "the count of values outside `validValues` must be zero" — the enum semantic. `metric` is
+required by `DataQualityLibrary`, and the operator comes from the `oneOf` in `DataQualityOperators`,
+so `mustBe: 0` is load-bearing and not decoration; omitting it fails validation.
+
+A complete four-constraint document in this shape was composed and passed `validate_odcs`. That
+end-to-end check — not a keyword grep — is what criterion 14 now asserts.
 
 Out of scope, named so it is a decision: ODCS's `nullable` omission is a **pre-existing** gap, not
 introduced here, and is not fixed by this design.
@@ -325,13 +418,15 @@ constrained field holding sensitive values will have examples surface in logs an
 - `CHANGELOG.md` must say two things, not one: a consumer matching exhaustively on `problem` will see
   a value it has never seen, **and** `FieldDiff` has gained three fields.
 
-**`problem` is declared in two places and gated in a third.** All three must change together:
+**`problem` is declared in two places and gated in a third, and a fourth site is required by
+§5.2.2.** All four must change together:
 
 | Site | What |
 | --- | --- |
 | `runtime.py` | `Problem = Literal[...]` |
 | `errors.py` | `FieldDiff.problem: Literal[...]` |
 | `runtime.py` | `hard = [d for d in diffs if d.problem in (...)]` — a hardcoded tuple |
+| `compile/pandera_compile.py` | `_family_check`'s `error=` → `"dtype_family:<type>"`, so the drop rule can recognize it (§5.2.2) |
 
 The duplication is pre-existing. Adding a fifth variant makes a divergence between the two `Literal`s
 possible for the first time in a way mypy will not necessarily catch at the append site. Collapsing
@@ -378,8 +473,17 @@ one-directional test, which is how a vacuous validator ships green.
     does not raise a traceback (§4.1.1).
 12. **An enum violation on a `kind: payload` boundary raises** rather than vanishing (§5.3).
 13. **The compiled JSON Schema carries the keywords** (§3/§5.1).
-14. **The compiled ODCS document carries `logicalTypeOptions`** and still validates against the
-    vendored v3.1.0 schema (§5.4).
+14. **The compiled ODCS document validates against the vendored v3.1.0 schema for a source schema
+    carrying all four constraints — `enum` included.** *(rev. 2)* The enum-bearing field is the point:
+    without it this criterion passes while the case that breaks `contract lint` is never exercised.
+15. **`enum` compiles to a `quality` rule, not to `logicalTypeOptions`** — asserted directly, because
+    emitting it as a `logicalTypeOption` fails validation on string/integer/number and passes
+    *vacuously* on boolean (§5.4).
+16. **No `logicalTypeOptions` key is emitted for a `logicalType` with no branch in the ODCS chain**
+    (§5.4). A test that only checks "the document validates" cannot catch this; it must assert the
+    key's absence.
+17. **A wrong-typed column reports the dtype diff with no `TypeError` text in `samples`** (§5.2.2) —
+    the observable form of criterion 7, and what fails if the drop rule runs after aggregation.
 
 ## 10. Deliberately not built
 
@@ -388,6 +492,9 @@ one-directional test, which is how a vacuous validator ships green.
   across Pandera, JSON Schema, and ODCS first (§4.1).
 - **`enum` on `float`.** Exact float equality.
 - **`pattern`, exclusive bounds, `maxLength`, `multipleOf`.** Additive when a real case appears.
+  **Known residual:** without `pattern`, the "empty `brand`" driving example is only partially
+  covered — `min_length: 1` rejects `""` but accepts `"  "` (verified). A whitespace-only brand is
+  the same bug as an empty one and still passes (§3).
 - **Fixing §15 item 5c** (classification by parsing library internals). §5.2 leans on it harder and
   raises its priority; it is not repaired here.
 - **ODCS `nullable`.** Pre-existing gap (§5.4).
