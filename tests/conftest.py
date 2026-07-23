@@ -18,3 +18,16 @@ def event_log_path(tmp_path, monkeypatch):
     path = tmp_path / "events.jsonl"
     monkeypatch.setenv("CONTRACT_EVENT_LOG", str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def _reset_contract_registry():
+    """Clear the boundary registry before each test (design §4 / §15 item 5).
+
+    The registry is process-global; without this, one test's registrations leak into
+    another's assertions (the order-dependence the pilot reported). Function-scoped and
+    before the test body, which is where every test does its own decoration.
+    """
+    from contract_core.runtime import _reset_registry
+    _reset_registry()
+    yield
