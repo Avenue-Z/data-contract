@@ -7,6 +7,7 @@ from contract_core.contract import Contract
 from contract_core.errors import UndeclaredBoundary
 from contract_core.reconcile import (
     Finding,
+    _portable_path,
     classify_import_error,
     diff_boundaries,
     force_import_package,
@@ -342,3 +343,26 @@ def test_findings_render_in_pinned_category_order():
     ]
     ordered = [f.category for f in sorted(unsorted, key=_sort_key)]
     assert ordered == ["P", "A", "B", "C", "D", "diagnostic"]
+
+
+def test_scan_placement_emits_cwd_relative_path(tmp_path, monkeypatch):
+    # A category-C finding for an in-tree file must render a working-dir-relative location,
+    # so CI output is machine-independent (design §5.2) — no absolute prefix leaks.
+    monkeypatch.chdir(tmp_path)
+    p = tmp_path / "mod.py"
+    p.write_text(
+        "def factory():\n"
+        "    @runtime.input('prompts')\n"
+        "    def load():\n"
+        "        return None\n"
+    )
+    findings = scan_decorator_placement([p])
+    assert findings[0].category == "C"
+    assert findings[0].identifier.startswith("mod.py:")
+    assert str(tmp_path) not in findings[0].message
+
+
+def test_portable_path_absolute_fallback_outside_cwd():
+    # A path outside the working tree stays absolute — the fallback, no crash, no cwd leak.
+    p = Path("/nonexistent/pkg/mod.py")
+    assert _portable_path(p) == "/nonexistent/pkg/mod.py"

@@ -57,6 +57,17 @@ def diff_boundaries(
     return sorted(findings, key=_sort_key)
 
 
+def _portable_path(path: Path) -> str:
+    """Render a path relative to the working directory when possible, so a category-C
+    finding printed in CI is machine-independent (design §5.2) — CI runs from the repo
+    root, so this yields e.g. `src/pkg/mod.py`. Absolute is the fallback for a file
+    outside the tree (an already-relative path, or a tmp fixture)."""
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 _BOUNDARY_ATTRS = {"raw", "input", "output"}
 
 
@@ -100,10 +111,11 @@ def scan_decorator_placement(files: Iterable[Path]) -> list[Finding]:
                         and isinstance(dec.args[0].value, str)
                     )
                     name = dec.args[0].value
+                    loc = f"{_portable_path(path)}:{node.lineno}"
                     findings.append(Finding(
-                        "C", f"{path}:{node.lineno}",
+                        "C", loc,
                         f"boundary decorator @…{dec.func.attr}('{name}') not at module "
-                        f"top level ({path}:{node.lineno})"))
+                        f"top level ({loc})"))
     return sorted(findings, key=_sort_key)
 
 
