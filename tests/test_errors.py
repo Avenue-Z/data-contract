@@ -1,5 +1,4 @@
 # tests/test_errors.py
-import pytest
 from pydantic import ValidationError
 
 import contract_core
@@ -97,7 +96,6 @@ def test_format_error_render_appends_hint_when_present():
     assert str(err).endswith("Upgrade the pin. See CHANGELOG.md.")
 
 
-@pytest.mark.xfail(reason="Schema strict lands in Task 2", strict=True)
 def test_from_validation_error_hints_only_on_extra_forbidden():
     # An extra key -> hint. Reconstruct a real pydantic ValidationError via a strict model.
     try:

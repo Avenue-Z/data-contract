@@ -3,12 +3,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from contract_core.types import Field
+from contract_core.errors import ContractFormatError
+from contract_core.types import CURRENT_FORMAT_VERSION, Field, normalize_format_version
 
 
 class Schema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    format_version: str = CURRENT_FORMAT_VERSION
     # `schema` intentionally matches the YAML key; it shadows BaseModel.schema (deprecated).
     schema: str  # type: ignore[assignment]
     version: str
@@ -20,6 +24,16 @@ class Schema(BaseModel):
     def ref(self) -> str:
         return f"{self.schema}@{self.version}"
 
+    @field_validator("format_version")
+    @classmethod
+    def _only_current_format(cls, v: str) -> str:
+        # Through from_yaml the dispatcher has already normalized to current; this fires on
+        # direct construction (§4.5 pt 2) and catches an upcast that forgot to rewrite the key.
+        if v != CURRENT_FORMAT_VERSION:
+            raise ValueError(
+                f"format_version {v!r} is not the current format {CURRENT_FORMAT_VERSION!r}")
+        return v
+
     @model_validator(mode="after")
     def _exactly_one_body(self) -> "Schema":
         if (self.fields is None) == (self.json_schema is None):
@@ -30,5 +44,18 @@ class Schema(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Schema":
-        data = yaml.safe_load(Path(path).read_text())
-        return cls.model_validate(data)
+        p = Path(path)
+        text = p.read_text()  # OSError leaks intentionally — not a malformed file (§5.1)
+        try:
+            raw = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ContractFormatError(
+                path=str(p),
+                errors=[("<file>", f"invalid YAML — {' '.join(str(exc).split())}")],
+                hint=None,
+            ) from exc
+        data = normalize_format_version(raw, str(p)) if isinstance(raw, dict) else raw
+        try:
+            return cls.model_validate(data)
+        except ValidationError as exc:
+            raise ContractFormatError.from_validation_error(str(p), exc) from exc

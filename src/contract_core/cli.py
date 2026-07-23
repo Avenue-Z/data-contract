@@ -4,11 +4,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import click
-import yaml
-from pydantic import ValidationError
 
 from contract_core.compile.odcs import to_odcs, validate_odcs
 from contract_core.contract import Contract
+from contract_core.errors import ContractFormatError
 from contract_core.resolver import Resolver, SchemaNotFound, parse_semver
 from contract_core.schema import Schema
 
@@ -28,27 +27,23 @@ def _lintable_schema_files(schema_dirs: Sequence[str]) -> list[Path]:
     return files
 
 
-def _load_failure(path: Path) -> str | None:
-    """Why `path` is not a loadable schema, or None if it loads.
+def _load_failure(path: Path) -> list[str] | None:
+    """Rendered diagnostic lines for why `path` is not loadable, or None if it loads.
 
-    Catches all three ways `Schema.from_yaml` fails, not just the pydantic one. It reads
-    the file (OSError) and runs `yaml.safe_load` (YAMLError) BEFORE `model_validate`
-    (ValidationError) — and lint now opens files nobody has ever validated, so the first
-    two are reachable in a way they were not when lint only parsed referenced schemas.
-    An uncaught one exits with a traceback and empty stdout, from the one command whose
-    entire job is a readable diagnostic.
+    `Schema.from_yaml` now wraps both the pydantic and the YAML failure into one
+    `ContractFormatError` (design §5.1), so lint renders its `.errors` — one line per
+    offending key path (§5.2.1) — plus its `.hint` when present. `OSError` still leaks
+    from `from_yaml` and is caught here; an unreadable file is not a malformed one.
     """
     try:
         Schema.from_yaml(path)
-    except ValidationError as exc:
-        # `msg` is pydantic's documented per-error field; the "Value error, " prefix it
-        # wraps a raised ValueError in is presentation, so strip it if present.
-        return str(exc.errors()[0]["msg"]).removeprefix("Value error, ")
-    except yaml.YAMLError as exc:
-        # A syntax error: report the problem line, not the multi-line marked-up dump.
-        return f"invalid YAML — {' '.join(str(exc).split())}"
+    except ContractFormatError as exc:
+        lines = [f"{loc}: {msg}" for loc, msg in exc.errors]
+        if exc.hint:
+            lines.append(exc.hint)
+        return lines
     except OSError as exc:
-        return f"unreadable — {exc.strerror or exc}"
+        return [f"unreadable — {exc.strerror or exc}"]
     return None
 
 
@@ -67,9 +62,10 @@ def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     resolver = Resolver(list(schema_dirs))
     malformed: list[str] = []
     for path in _lintable_schema_files(schema_dirs):
-        reason = _load_failure(path)
-        if reason is not None:
-            malformed.append(f"{path}: {reason}")
+        reasons = _load_failure(path)
+        if reasons is not None:
+            for reason in reasons:
+                malformed.append(f"{path}: {reason}")
     if malformed:
         click.echo("LINT FAILED — malformed schemas:")
         for line in malformed:
