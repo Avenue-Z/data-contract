@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 `contract-core` is **pre-1.0**. Under 0.x semantics a **minor** bump may carry breaking
 changes to the public API or the authored format. Read the entry before moving a pin.
 
-## [Unreleased]
+## [0.4.0] — 2026-07-23
 
 ### Added
 
