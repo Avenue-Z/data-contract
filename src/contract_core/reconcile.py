@@ -8,11 +8,13 @@ import ast
 import importlib
 import pkgutil
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from contract_core.contract import Contract
 from contract_core.errors import UndeclaredBoundary
+from contract_core.runtime import ContractRuntime, _reset_registry
 
 
 @dataclass(frozen=True)
@@ -196,3 +198,67 @@ def force_import_package(package: str) -> list[Finding]:
         except Exception as exc:  # noqa: BLE001
             findings.append(classify_import_error(info.name, exc))
     return findings
+
+
+@dataclass(frozen=True)
+class ReconcileResult:
+    findings: list[Finding]
+    system: str
+    version: str
+    n_boundaries: int
+
+
+def _declared_set(contract: Contract) -> set[tuple[str, str]]:
+    return (
+        {("raw", b.name) for b in contract.raw}
+        | {("input", b.name) for b in contract.inputs}
+        | {("output", b.name) for b in contract.outputs}
+    )
+
+
+def _python_files(paths: Iterable[Path]) -> list[Path]:
+    out: list[Path] = []
+    for p in paths:
+        if p.is_dir():
+            out.extend(sorted(p.rglob("*.py")))
+        elif p.suffix == ".py":
+            out.append(p)
+    return out
+
+
+def _package_source_files(package: str) -> list[Path]:
+    pkg = sys.modules[package]
+    pkg_path = getattr(pkg, "__path__", None)
+    if pkg_path is not None:
+        return _python_files(Path(p) for p in pkg_path)
+    file = getattr(pkg, "__file__", None)
+    return [Path(file)] if file else []
+
+
+def reconcile(
+    contract_path: str | Path, package: str, test_paths: Sequence[Path]
+) -> ReconcileResult:
+    """Load the contract, force-import the package, diff + scan, return findings (design §3).
+
+    Raises ContractFormatError (like `lint`) if the contract is malformed — the CLI renders
+    it. A category-P import failure short-circuits: nothing can be scanned, so return it alone.
+    """
+    contract = Contract.from_yaml(contract_path)
+    declared = _declared_set(contract)
+    n_boundaries = len(declared)
+
+    _reset_registry()
+    import_findings = force_import_package(package)
+    if any(f.category == "P" for f in import_findings):
+        return ReconcileResult(import_findings, contract.system, contract.version, n_boundaries)
+
+    placement = scan_decorator_placement(_package_source_files(package))
+    registered = {(d, n) for (s, d, n) in ContractRuntime.REGISTRY if s == contract.system}
+    diff = diff_boundaries(declared, registered)
+    covered = scan_drift_markers(_python_files(test_paths))
+    drift = [
+        Finding("D", b.name, f"raw boundary '{b.name}' declared but no drift test found")
+        for b in contract.raw if b.name not in covered
+    ]
+    findings = sorted(import_findings + placement + diff + drift, key=_sort_key)
+    return ReconcileResult(findings, contract.system, contract.version, n_boundaries)

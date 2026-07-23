@@ -10,6 +10,7 @@ from contract_core.reconcile import (
     classify_import_error,
     diff_boundaries,
     force_import_package,
+    reconcile,
     scan_decorator_placement,
     scan_drift_markers,
 )
@@ -284,3 +285,46 @@ def test_force_import_undeclared_name_is_category_B(make_reconcile_pkg):
     pkg = make_reconcile_pkg({"boundaries.py": mod})
     findings = force_import_package(pkg.package)
     assert any(f.category == "B" and f.identifier == "not-declared" for f in findings)
+
+
+def _drift_dir(tmp_path, name="prompts_raw"):
+    d = tmp_path / "drifts"
+    d.mkdir(exist_ok=True)
+    (d / f"drift_{name}.py").write_text(
+        "import pytest\n"
+        f"@pytest.mark.raw_drift('{name}')\n"
+        "def test_rejects_unknown_shape():\n"
+        "    pass\n"
+    )
+    return d
+
+
+def test_reconcile_clean_package_has_no_gating_findings(
+    make_reconcile_pkg, reconcile_sources, tmp_path
+):
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.boundaries})
+    result = reconcile(pkg.contract, pkg.package, [_drift_dir(tmp_path)])
+    assert [f for f in result.findings if f.gating] == []
+    assert result.system == "fix-sys"
+    assert result.n_boundaries == 2
+
+
+def test_reconcile_incident_2_missing_decorator_is_category_A(
+    make_reconcile_pkg, reconcile_sources, tmp_path
+):
+    # declares raw+input, but the module only wires up input → raw is declared-but-unregistered.
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.input_only})
+    result = reconcile(pkg.contract, pkg.package, [_drift_dir(tmp_path)])
+    a = [f for f in result.findings if f.category == "A"]
+    assert [f.identifier for f in a] == ["raw:prompts_raw"]
+
+
+def test_reconcile_missing_drift_test_is_category_D(
+    make_reconcile_pkg, reconcile_sources, tmp_path
+):
+    empty = tmp_path / "no_drifts"
+    empty.mkdir()
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.boundaries})
+    result = reconcile(pkg.contract, pkg.package, [empty])
+    d = [f for f in result.findings if f.category == "D"]
+    assert [f.identifier for f in d] == ["prompts_raw"]
