@@ -48,6 +48,11 @@ Consequences:
   it *reliably* (not by parsing a message — §15 item 5 damns that), `_spec` raises a typed
   `UndeclaredBoundary(KeyError)` (internal, in `errors.py`, subclassing `KeyError` for
   back-compat), which force-import turns into a **gating** finding (category B, §5).
+  Classification-by-type identifies the category but does not hand you the name to *print*, so the
+  exception **carries `.name` and `.direction` as attributes** and category B reads those — closing
+  the loop, so the implementer never `.split("'")`s the message (which would re-introduce the exact
+  anti-pattern this whole carve-out exists to avoid). `_spec` raises
+  `UndeclaredBoundary(direction=…, name=…)`.
 - **`declared − registered` is the load-bearing half.** A contract boundary that no decorator
   ever wired up (or wired up in code that force-import never reached) is the real drift, and the
   real false-pass risk.
@@ -155,7 +160,7 @@ optional-dependency import error, because *an annoying gate gets disabled, and a
 
 | Cat | Finding | Source & purpose |
 | --- | --- | --- |
-| **P** | `package '<pkg>' could not be imported` (pkg, error) | The top-level `--package` import failed (not installed, error in `__init__`). reconcile verified *nothing*, so it must never report a pass. Loud, explicit — §6.2. |
+| **P** | `package '<pkg>' could not be imported` (pkg, error) | The top-level `--package` import failed (not installed, error in `__init__`). reconcile verified *nothing*, so it must never report a pass. Loud, explicit — §6.2. (An `UndeclaredBoundary` decorator in `__init__.py` classifies as B, not P; both gate.) |
 | **A** | `declared but no decorator registered it` (direction, name) | The R3 diff, `declared − registered`. The load-bearing false-pass guard; the incident-#2 replay. **Also the sound backstop that lets generic import errors be non-gating** (§5.1). |
 | **B** | `decorator names an undeclared boundary '<name>'` (module, name) | A boundary decorator referenced a name the contract does not declare — the `registered − declared` guard (§2), classified by the typed `UndeclaredBoundary` (not by message-parsing). This is contract drift and gates. |
 | **C** | `boundary decorator not at module top level` (file:line, name) | Placement AST scan. Enforces the "defined at import time" precondition force-import relies on (R3). |
@@ -184,6 +189,12 @@ to catch, so it is classified (`UndeclaredBoundary`) and gates directly as categ
 - **Deterministic order (pinned for golden CLI tests and stable CI diffs):** findings render in a
   fixed category order — P, A, B, C, D, then diagnostics — and within each category sorted by their
   identifying tuple (name, or `file:line`).
+- **Diagnostic bodies are env-specific — keep them out of golden assertions.** An import
+  diagnostic's free-text summary can embed absolute paths / env-specific text (circular-import
+  chains, missing-file paths). The golden CLI test asserts only on the **portable** fields —
+  category, and the identifying tuple (module name, boundary name/direction, `file:line`) — never on
+  the raw summary body. The summary is normalized to `<ExceptionType>: <module>` where feasible and
+  otherwise treated as non-asserted display text.
 - **The diagnostic/A overlap is intended, not emergent.** A module that fails to import can produce
   *both* a non-gating import diagnostic *and* a gating category-A finding (for each declared
   boundary it would have registered). This is complementary: A is the gate; the diagnostic is the
@@ -207,8 +218,11 @@ to catch, so it is classified (`UndeclaredBoundary`) and gates directly as categ
 
   Categories P and B, and the import diagnostics, are produced by the **impure** force-import shell
   (§6.2), not these pure functions — they are outcomes of *running* imports, not of diffing
-  structure. `classify_import_error(exc) -> Finding` (pure: exception in, category B-or-diagnostic
-  out) is the one seam between them and is unit-tested directly.
+  structure. `classify_import_error(exc, *, fatal=False) -> Finding` (pure: exception in, finding
+  out) is the one seam between them and is unit-tested directly. It walks the exception chain
+  (`__cause__`/`__context__`) for an `UndeclaredBoundary` → **B**; otherwise **P** when
+  `fatal=True` (top-level import, no A backstop) or a **non-gating diagnostic** when `fatal=False`
+  (a leaf/subpackage failure A can backstop).
 - **The CLI subcommand** in [`cli.py`](../../../src/contract_core/cli.py) is the **impure shell**:
   force-import, file reads, registry snapshot, rendering, exit codes. It follows `lint`'s exact
   pattern (`click.Path` option types, `ContractFormatError` via `_echo_format_error`, `sys.exit`).
@@ -232,16 +246,37 @@ an old module object is stale — reconcile owns its process and the test fixtur
 references across a reconcile call, so no live object observes the swap.
 
 **Top-level import gates; submodule imports are best-effort (blast radius).** The top-level
-`import_module(pkg_name)` is wrapped: if it raises (package not installed, error in `__init__`),
-reconcile emits a **category P** finding and exits 1 — it verified nothing and must not pass; no
-walk is attempted. On success, `pkgutil.walk_packages(pkg.__path__, pkg.__name__ + ".")` imports
-each submodule, each wrapped in `try/except`. The exception is **classified**, not blanket-gated:
-- `UndeclaredBoundary` → **category B** (gating): a decorator named a boundary the contract does
-  not declare.
-- any other exception → a **non-gating import diagnostic** (§5.1): reported with a one-line
-  summary (never a raw traceback), and walking continues so one broken module does not mask the
-  rest. Category A remains the sound backstop for any *declared* boundary that module would have
-  registered.
+`import_module(pkg_name)` is wrapped and routed through `classify_import_error(exc, fatal=True)`: an
+`UndeclaredBoundary` (a decorator in `__init__.py`) → **category B**, anything else → **category P**,
+either way exit 1 with no walk attempted — at the top level there is no walk yet and so no category-A
+backstop, so *any* failure here is fatal (this is why `fatal=True` maps the non-undeclared case to
+gating P rather than a diagnostic). On success, the walk proceeds.
+
+**The walk must not abort — `onerror` is mandatory, not optional.** `pkgutil.walk_packages`
+imports each **subpackage itself** (to read its `__path__` and recurse); with no `onerror` its
+documented contract is "ImportErrors are caught and ignored [subtree silently skipped], while all
+other exceptions are propagated, terminating the search." Since `UndeclaredBoundary` is a
+`KeyError`, a subpackage `__init__` raising it would **propagate out of the generator and terminate
+the walk** — a per-leaf `try/except` in the loop body never sees it, because it is raised by the
+iterator, not the body. That is Blocker 3's crash relocated into a subpackage. So the walk **must**
+be `walk_packages(pkg.__path__, pkg.__name__ + ".", onerror=_on_walk_error)`, where `_on_walk_error`
+reads `sys.exc_info()` and routes through the same `classify_import_error`. Two import
+responsibilities, both classified:
+- **subpackage import failures** (raised *inside* `walk_packages`) → handled by `onerror`;
+- **leaf-module import failures** (`walk_packages` does not import leaf modules — the loop does) →
+  handled by the loop's `try/except`.
+
+Both call `classify_import_error(exc)` (non-fatal): `UndeclaredBoundary` **anywhere in the
+exception chain** (`__cause__`/`__context__`, walked — so a `raise RuntimeError(...) from
+UndeclaredBoundary(...)` is not misclassified into a diagnostic and lost) → **category B**; any
+other exception → a **non-gating import diagnostic** (§5.1), one-line summary, never a raw
+traceback, walk continues.
+
+**A skipped subtree is sound but must be surfaced.** When a subpackage `__init__` fails, its
+children are never walked (their modules never import, never register). Declared boundaries in that
+subtree are still named by **category A** (sound), but a completeness gate silently under-walking a
+subtree is exactly this spec's fear — so `onerror` emits a diagnostic naming the skipped subpackage,
+making the under-walk visible rather than swallowed.
 
 **`__path__`-absent (single-module / namespace packages).** `walk_packages(pkg.__path__, …)`
 assumes a regular package. If the imported `--package` has no `__path__` (it is a single module),
@@ -326,6 +361,15 @@ Critical pins (each is a false-*negative* the gate must not have):
   reconcile **passes** (exit 0) while *reporting* the import diagnostic. And the sound-backstop
   case: a submodule that fails to import *and* holds a declared boundary ⇒ category A FAILS naming
   the boundary, with the diagnostic printed as the likely cause. Together these pin §5.1.
+- **B2-walk — the walk does not abort (§6.2 `onerror`):** a fixture where a **subpackage
+  `__init__`** raises a non-`ImportError` (the case that, with no `onerror`, terminates
+  `walk_packages`) ⇒ reconcile does **not** crash; sibling subpackages are still walked and their
+  boundaries register; the failure surfaces as a diagnostic (or category B if it is
+  `UndeclaredBoundary`) naming the skipped subpackage. Without `onerror` this test crashes — it is
+  the regression pin for the reviewer's Should-fix 1.
+- **B-chain — chained UndeclaredBoundary:** a module doing `raise RuntimeError(...) from
+  UndeclaredBoundary(direction=…, name=…)` ⇒ still classified **category B** (the chain is walked),
+  not lost to a non-gating diagnostic. Guards the narrow false negative in `classify_import_error`.
 - **P — package won't import (§6.2):** `--package` names a package whose top-level import raises ⇒
   reconcile emits a category-P finding and exits 1, never a traceback and never a pass.
 - **B — undeclared-boundary decorator:** a top-level `@runtime.input("typo")` naming a boundary the
@@ -341,7 +385,8 @@ Critical pins (each is a false-*negative* the gate must not have):
   `(direction, name)` ⇒ reconcile-for-one does not count the other's registration;
   `_reset_registry` makes the tests order-independent.
 - **Determinism:** a multi-finding run renders in the pinned order (§5.2), so the CLI golden test
-  is stable.
+  is stable; the golden assertion covers only portable fields (category + identifying tuple), not
+  env-specific diagnostic bodies (§5.2).
 - **Clean case:** a fully-wired fixture package ⇒ `exit 0` with the `OK:` summary.
 
 Baseline 212 tests stay green; `ruff check .` and `mypy` stay clean. New tests live in
