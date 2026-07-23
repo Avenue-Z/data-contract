@@ -2,11 +2,9 @@
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from contract_core.errors import ContractFormatError
-from contract_core.types import CURRENT_FORMAT_VERSION, Field, normalize_format_version
+from contract_core.types import CURRENT_FORMAT_VERSION, Field, load_yaml_model
 
 
 class Schema(BaseModel):
@@ -44,18 +42,4 @@ class Schema(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Schema":
-        p = Path(path)
-        text = p.read_text()  # OSError leaks intentionally — not a malformed file (§5.1)
-        try:
-            raw = yaml.safe_load(text)
-        except yaml.YAMLError as exc:
-            raise ContractFormatError(
-                path=str(p),
-                errors=[("<file>", f"invalid YAML — {' '.join(str(exc).split())}")],
-                hint=None,
-            ) from exc
-        data = normalize_format_version(raw, str(p)) if isinstance(raw, dict) else raw
-        try:
-            return cls.model_validate(data)
-        except ValidationError as exc:
-            raise ContractFormatError.from_validation_error(str(p), exc) from exc
+        return load_yaml_model(cls, path)

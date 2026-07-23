@@ -1,8 +1,17 @@
 # src/contract_core/types.py
 import math
+from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from contract_core.errors import ContractFormatError
 
@@ -32,6 +41,28 @@ def normalize_format_version(data: dict[str, Any], path: str) -> dict[str, Any]:
         raise ContractFormatError.unreadable_version(
             path=path, found=found, supported=READABLE_FORMAT_VERSIONS)
     return {**data, "format_version": CURRENT_FORMAT_VERSION}
+
+
+def load_yaml_model[ModelT: BaseModel](model: type[ModelT], path: str | Path) -> ModelT:
+    """Read an authored YAML file into `model`, wrapping format failures (design §5.1).
+
+    OSError from read_text leaks intentionally — an unreadable file is not a malformed one.
+    """
+    p = Path(path)
+    text = p.read_text()
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ContractFormatError(
+            path=str(p),
+            errors=[("<file>", f"invalid YAML — {' '.join(str(exc).split())}")],
+            hint=None,
+        ) from exc
+    data = normalize_format_version(raw, str(p)) if isinstance(raw, dict) else raw
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        raise ContractFormatError.from_validation_error(str(p), exc) from exc
 
 
 def _value_matches_type(value: Any, declared: str) -> bool:
