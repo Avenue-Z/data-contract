@@ -45,8 +45,16 @@ needs to adopt it.
   test reusable-workflow plumbing that cannot faithfully run against *unreleased* PR code, since the
   workflow installs contract-core by released tag.
 - **No `contract-core-version` workflow input.** The pin lives in the consumer's `pyproject.toml`
-  (§1 of the setup guide) — a single source of truth. A second pin in the workflow could silently
-  disagree with the pyproject pin.
+  (§1 of the setup guide) — a single source of truth for the *installed version*. A second pin in
+  the workflow could silently disagree with the pyproject pin.
+  **But note the residual coupling this does NOT close:** the workflow's own `@vX.Y.Z` tag ships the
+  hardcoded CLI flag strings (`--contract`/`--schemas`/`--package`/`--tests`), which are themselves a
+  version contract with the CLI the consumer installs. Those two tags — the workflow `@tag` and the
+  pyproject contract-core pin — live in different files and nothing at runtime forces them equal, yet
+  §7 states a 0.x minor bump may break the CLI surface. This coupling is closed by a **hard
+  same-tag requirement in the §6 docs** (not the soft cross-reference §3 gives), rather than by a
+  runtime assertion: extracting the workflow's own tag to diff against `contract_core.__version__` is
+  brittle and still cannot tell a compatible minor from a breaking one. See §6.
 - **No skip-lint / skip-reconcile knobs, no deploy-key/SSH auth variant.** Not requested.
 - **No changes to [`ci.yml`](../../../.github/workflows/ci.yml) or
   [`ci-aggregate-gate.sh`](../../../scripts/ci-aggregate-gate.sh).** See §5.
@@ -57,7 +65,8 @@ The reusable workflow lives **here, in `data-contract`**, not in `Avenue-Z/repo-
 
 - The workflow is intrinsically coupled to contract-core's CLI surface and version. It should be
   released in lockstep with the CLI it wraps, and referenced by the **same** `@vX.Y.Z` tag consumers
-  already pin contract-core to.
+  already pin contract-core to. This "same tag" is design intent here but a **hard requirement**
+  where it's enforceable — in the §6 docs — because nothing at runtime forces it (§2).
 - `repo-template`'s workflows get copied into *every* generated repo. A reconcile gate is opt-in —
   only repos that consume contract-core need it — so baking it into the template would ship a dead
   gate into unrelated repos.
@@ -108,13 +117,23 @@ The input exists only so a consumer who needs extras (`pip install ".[ci]"`) can
 2. **setup-python** — `actions/setup-python` with `inputs.python-version`.
 3. **configure git auth** — `set -euo pipefail` (deliberately **no `set -x`**, so the token cannot
    leak to logs). Token supplied via `env:` from `secrets.contract-core-token`, never interpolated
-   into the script body:
+   into the script body. **Two hardening rules the prose depends on:**
+   - **Guard the empty token explicitly.** `set -u` catches an *unset* variable but not a
+     *set-but-empty* one — the classic misconfigured-or-absent-secret case (including any fork PR,
+     which receives no secrets — see §6). Without a guard, an empty token writes a broken
+     `https://x-access-token:@github.com/…` rewrite and pip fails many steps later with an opaque
+     auth error — the very "shows up as a pip clone failure, not as anything contract-shaped" mode
+     [`consuming-repo-setup.md`](../../consuming-repo-setup.md#L19) warns about. So the step MUST
+     begin: `[ -n "${CONTRACT_CORE_TOKEN}" ] || { echo "::error::contract-core-token is empty"; exit 1; }`
+   - **Scope the rewrite to exactly the one private repo**, not all of `github.com` — otherwise the
+     credential rides *every* `github.com` HTTPS clone during install (transitive git deps,
+     submodules, a setuptools-scm tag fetch), which contradicts the least-privilege posture of §4.2:
    ```bash
    git config --global \
-     url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/".insteadOf \
-     "https://github.com/"
+     url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract".insteadOf \
+     "https://github.com/Avenue-Z/data-contract"
    ```
-   This authenticates pip's HTTPS clone of the private contract-core dependency.
+   This authenticates pip's HTTPS clone of the private contract-core dependency and nothing else.
 4. **install** — run `inputs.install-command`.
 5. **lint** — `set -euo pipefail`; expand `inputs.schemas` (newline-delimited) into repeated
    `--schemas` flags, then run `contract lint --contract <contract> --schemas ...`.
@@ -169,10 +188,19 @@ same terse, caveat-forward tone as the rest of the guide. It covers:
   `Avenue-Z/data-contract/.github/workflows/contract-gate.yml@vX.Y.Z` with the `with:` inputs and an
   explicit `secrets:\n  contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}` block.
   Cross-reference §1 for provisioning that read token (deploy key or `contents: read` PAT).
-- **Which tag to pin** — pin `@` the **same tag as contract-core, at or above the release that first
-  shipped the gate** (not a bare `@vX.Y.Z`). You cannot reference the workflow at a tag older than
-  the one that introduced it — the same chicken-and-egg the §5 by-hand smoke test hits: the release
-  that ships the workflow is the first that can call it.
+- **Which tag to pin — a hard requirement, not a suggestion.** The workflow `@tag` **MUST** be the
+  **same tag** as the contract-core pin in the consumer's `pyproject.toml`. Stated as an imperative
+  with the failure named: the workflow ships hardcoded CLI flags at its tag, the CLI is installed at
+  the pyproject tag, and §7 warns a 0.x minor may break that surface — so **a mismatch is silent CLI
+  breakage** (an unknown-flag error masquerading as a gate failure), not a warning. And it must be at
+  or above the release that first shipped the gate — you cannot reference the workflow at a tag older
+  than the one that introduced it (the §5 chicken-and-egg: the release that ships the workflow is the
+  first that can call it).
+- **Fork-PR assumption, stated in one sentence.** A `pull_request` from a fork receives no secrets
+  and no writable token, so `contract-core-token` arrives empty and the gate cannot pass — it fails
+  fast with the §4.3 `::error::contract-core-token is empty` guard (a clear message, not an opaque
+  pip error). This gate assumes the repo's same-repo private branch flow (the org norm); fork PRs are
+  out of its scope by construction.
 - **Plain inline alternative** — a hand-rolled job (checkout → setup-python 3.13 → install → run the
   two commands) for a repo that would rather see the mechanics than call the reusable workflow. This
   alternative also side-steps the Actions-access prerequisite entirely (nothing to resolve
@@ -200,10 +228,12 @@ CI/docs change, not a library-API change, so no code-behavior note is required.
   `tests/test_cli.py` inside the gating `test` job; the existing suite must still pass
   (`ruff check .`, `mypy`, `pytest -q`), though this change touches no Python.
 - **Accepted residual risk — stated, not hidden.** actionlint validates the workflow's *syntax*, not
-  that the reusable-workflow plumbing works end-to-end. Because the workflow installs contract-core
-  by released tag, it cannot be faithfully exercised against unreleased PR code (§2), so the **first
-  real proof it works end-to-end is a consumer wiring it post-release** — the same posture as the
-  existing §5 by-hand smoke test. This is an accepted limitation, not a gap actionlint closes.
+  that the steps run the commands or that exit codes propagate to the gate. So the **behavioral half
+  of §9 criterion #1 is verified by inspection, not by CI** — and, because the workflow installs
+  contract-core by released tag, it cannot be faithfully exercised against unreleased PR code (§2).
+  The **first real proof it works end-to-end is a consumer wiring it post-release** — the same
+  posture as the existing §5 by-hand smoke test. This covers both criterion #1's runtime half and
+  criterion #2; treat neither as CI-proven.
 - **Branch flow:** work on a `ci/*` branch, open the PR against `dev`. The chain
   `ci/* → dev → staging → main` is enforced by
   [`guard-base-branch.yml`](../../../.github/workflows/guard-base-branch.yml) /
@@ -217,8 +247,11 @@ CI/docs change, not a library-API change, so no code-behavior note is required.
 ## 9. Success criteria
 
 1. `.github/workflows/contract-gate.yml` exists, is valid per actionlint, is `on: workflow_call`
-   only, pins actions by SHA, sets `permissions: contents: read`, and runs `lint` then `reconcile`
-   failing on any nonzero exit.
+   only, pins actions by SHA, sets `permissions: contents: read`, guards an empty token, scopes the
+   `insteadOf` rewrite to the one private repo, and runs `lint` then `reconcile` failing on any
+   nonzero exit. *actionlint proves the shape; the runtime behavior (steps run, exit codes
+   propagate) is verified by inspection here and first-consumer adoption — see §8's residual-risk
+   note.*
 2. A consumer can copy the `uses:` snippet from the docs and have a working merge-blocking gate,
    given (a) the read token from §1 **and** (b) the one-time Actions access-sharing setting on
    `data-contract` from §4.4/§10. Without (b), workflow resolution fails before any step runs, so
