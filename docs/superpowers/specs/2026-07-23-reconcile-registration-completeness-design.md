@@ -301,10 +301,14 @@ ordinary `.input()`/`.output()` *method calls*. Within those, a decorator is fla
 **Over-match, measured not asserted.** The residual false match is an unrelated
 `@x.input("literal")` *decorator* whose receiver `x` is not a runtime. Measured against real code:
 in this repo, **20 of 20** decorator-position `.raw/.input/.output` matches are genuine boundary
-decorators (0 false); the pilot (`aivx-reports`) currently has none. Implementation **Task 1**
-reports an over-match count against the pilot and this repo in the PR, replacing this estimate with
-a number. If a repo ever proves noisy, the fallback narrowing is to require the receiver name to
-match the module's runtime variable — deferred unless measurement demands it. Whatever the count,
+decorators (0 false). The pilot (`aivx-reports`) currently has **no** boundary decorators, so a
+pilot figure today is *vacuous* — which is exactly why it cannot be waved at. **Standing obligation
+(Task 1 of the plan, and a PR merge condition):** the PR must land the measured over-match count
+against real decorated code — this repo and the pilot once it carries decorators — in its
+description; carrying this 20/20 estimate forward silently is not acceptable, because the
+measurement is the thing that actually retires the "annoying gate gets disabled" risk. If a repo
+ever proves noisy, the fallback narrowing is to require the receiver name to match the module's
+runtime variable — deferred unless measurement demands it. Whatever the count,
 the match fails in the **safe (over-strict) direction** — an over-match is a false *positive*
 (annoying), never a false pass; but per §5.1's own logic an annoying gate gets disabled, which is
 why the count must be small and measured, not waved at.
@@ -317,9 +321,23 @@ remain undetectable by any of this machinery. The authoring skill steers away fr
 ### 7.1 The mechanism
 
 Convention: each raw-boundary drift test carries `@pytest.mark.raw_drift("<raw_boundary_name>")`.
-`scan_drift_markers` AST-parses (never imports) every `.py` under `--tests`, collecting every
-string argument to a `raw_drift` marker into the covered set. For every `name` in `contract.raw`:
-`name ∉ covered` ⇒ a category-D finding.
+`scan_drift_markers` AST-parses (never imports) every `.py` under `--tests` and collects the
+covered set. For every `name` in `contract.raw`: `name ∉ covered` ⇒ a category-D finding.
+
+**Matched AST shape (held to §6.3's precision).** Over each file's decorators, a marker is matched
+when it is an `ast.Call` whose `.func` is an `ast.Attribute` with `.attr == "raw_drift"` — which
+catches both `@pytest.mark.raw_drift(...)` and `@mark.raw_drift(...)` regardless of how `pytest` is
+imported — and each **string-literal** (`ast.Constant` str) positional argument is added to the
+covered set.
+
+**Documented residuals (both fail over-strict — toward the gate — like C's).**
+- **String-literal arguments only.** `@pytest.mark.raw_drift(SOME_CONST)` — a name/reference, not a
+  literal — is invisible to a non-importing scan, so the boundary reads as uncovered and D fires.
+- **Attribute form only.** An aliased bare `@raw_drift(...)` (an `ast.Name`, no `.attr`) is not
+  matched, so D fires. The convention is the `pytest.mark`/`mark` attribute form; aliasing the
+  marker to a bare name is unsupported.
+Neither is a soundness hole — both err toward firing the gate, never toward a false pass — but per
+§5.1 ("an annoying gate gets disabled") they are stated, not left emergent.
 
 `pytest.mark.raw_drift` is idiomatic pytest and requires **no new importable API** — a marker is
 attribute access, not an import, so the frozen surface stays at 6. Consuming repos register the
