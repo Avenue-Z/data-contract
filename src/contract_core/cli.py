@@ -58,7 +58,15 @@ def main() -> None:
               type=click.Path(exists=True))
 def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     """Validate a contract: resolve every schema ref and compile to valid ODCS."""
-    contract = Contract.from_yaml(contract_path)
+    try:
+        contract = Contract.from_yaml(contract_path)
+    except ContractFormatError as exc:
+        click.echo("LINT FAILED — malformed contract:")
+        for loc, msg in exc.errors:
+            click.echo(f"  - {loc}: {msg}")
+        if exc.hint:
+            click.echo(f"  {exc.hint}")
+        sys.exit(1)
     resolver = Resolver(list(schema_dirs))
     malformed: list[str] = []
     for path in _lintable_schema_files(schema_dirs):

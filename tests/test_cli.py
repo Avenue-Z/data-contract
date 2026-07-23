@@ -74,3 +74,40 @@ def test_lint_reports_unparseable_yaml_instead_of_crashing():
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert "4.0.0" in result.output
     assert "LINT FAILED" in result.output
+
+
+def test_lint_reports_a_malformed_contract_without_a_traceback():
+    runner = CliRunner()
+    res = runner.invoke(main, ["lint", "--contract", str(FIX / "contract_malformed.yaml"),
+                               "--schemas", str(FIX / "schemas")])
+    assert res.exit_code == 1
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+    assert "LINT FAILED" in res.output
+    assert "systemm" in res.output  # names the offending key path
+
+
+def test_lint_names_every_unknown_key_and_prints_the_hint():
+    # Criterion 14: the operator's STDOUT, not the exception. Two unknown keys -> two lines,
+    # plus the upgrade hint, from a schema authored for a newer format.
+    import tempfile
+    import textwrap
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d) / "peec" / "prompts_export"
+        root.mkdir(parents=True)
+        (root / "9.0.0.yaml").write_text(textwrap.dedent("""\
+            schema: peec.prompts_export
+            version: 9.0.0
+            kind: tabular
+            fields:
+              - name: prompt
+                type: string
+                pattern: "^x$"
+                max_length: 5
+        """))
+        res = CliRunner().invoke(main, [
+            "lint", "--contract", str(FIX / "contract_lintable.yaml"),
+            "--schemas", str(FIX / "schemas"), "--schemas", d])
+    assert res.exit_code == 1
+    assert "pattern" in res.output
+    assert "max_length" in res.output
+    assert "Upgrade the pin" in res.output
