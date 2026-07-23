@@ -1,5 +1,10 @@
 # tests/test_errors.py
-from contract_core.errors import ContractViolation, FieldDiff
+import pytest
+from pydantic import ValidationError
+
+import contract_core
+from contract_core.errors import ContractFormatError, ContractViolation, FieldDiff
+from contract_core.schema import Schema  # only to produce a real ValidationError
 
 
 def test_violation_message_names_boundary_schema_and_field():
@@ -62,3 +67,70 @@ def test_structural_message_is_unchanged():
         "peec.prompts_export@1.0.0 at input 'prompts': "
         "missing field 'position' expected int, observed absent"
     )
+
+
+# ---- ContractFormatError (design R10, §5) ----
+
+def test_format_error_is_a_valueerror_and_not_a_contract_violation():
+    err = ContractFormatError(path="a.yaml", errors=[("x", "bad")], hint=None)
+    assert isinstance(err, ValueError)
+    assert not isinstance(err, ContractViolation)
+
+
+def test_format_error_render_lists_every_error_and_omits_hint_when_none():
+    err = ContractFormatError(
+        path="s.yaml",
+        errors=[("fields.1.pattern", "Extra inputs are not permitted"),
+                ("fields.1.max_length", "Extra inputs are not permitted")],
+        hint=None,
+    )
+    text = str(err)
+    assert "s.yaml:" in text
+    assert "fields.1.pattern: Extra inputs are not permitted" in text
+    assert "fields.1.max_length: Extra inputs are not permitted" in text
+    assert "Upgrade the pin" not in text
+
+
+def test_format_error_render_appends_hint_when_present():
+    err = ContractFormatError(
+        path="s.yaml", errors=[("k", "m")], hint="Upgrade the pin. See CHANGELOG.md.")
+    assert str(err).endswith("Upgrade the pin. See CHANGELOG.md.")
+
+
+@pytest.mark.xfail(reason="Schema strict lands in Task 2", strict=True)
+def test_from_validation_error_hints_only_on_extra_forbidden():
+    # An extra key -> hint. Reconstruct a real pydantic ValidationError via a strict model.
+    try:
+        Schema.model_validate({"schema": "a.b", "version": "1.0.0", "kind": "tabular",
+                               "fields": [{"name": "x", "type": "int"}], "surprise": 1})
+    except ValidationError as exc:
+        err = ContractFormatError.from_validation_error("s.yaml", exc)
+    assert any("surprise" in loc for loc, _ in err.errors)
+    assert err.hint is not None and "Upgrade the pin" in err.hint
+
+
+def test_from_validation_error_no_hint_on_an_applicability_error():
+    # min_length on an int field is a genuine authoring error, NOT version skew (criterion 8).
+    # Unlike the extra-forbidden case above, this one does not depend on Schema becoming
+    # strict in Task 2: Field._constraints_match_the_declared_type (types.py) already
+    # rejects min_length on a non-string field today, so this passes now, not xfail.
+    try:
+        Schema.model_validate({"schema": "a.b", "version": "1.0.0", "kind": "tabular",
+                               "fields": [{"name": "x", "type": "int", "min_length": 1}]})
+    except ValidationError as exc:
+        err = ContractFormatError.from_validation_error("s.yaml", exc)
+    assert err.hint is None
+
+
+def test_unreadable_version_names_found_and_supported():
+    err = ContractFormatError.unreadable_version(
+        path="s.yaml", found="v2", supported=frozenset({"v1"}))
+    text = str(err)
+    assert "v2" in text
+    assert "['v1']" in text
+    assert err.hint is not None
+
+
+def test_public_surface_now_exports_the_error():
+    assert "ContractFormatError" in contract_core.__all__
+    assert contract_core.ContractFormatError is ContractFormatError

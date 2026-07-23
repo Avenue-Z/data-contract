@@ -9,12 +9,13 @@ supported and may change without a major bump. That list is exhaustive, and it i
 past this package for them is not supported either. The CLI is invoked through the
 `contract` console script, not by importing `contract_core.cli`.
 """
-from contract_core.errors import ContractViolation, FieldDiff
+from contract_core.errors import ContractFormatError, ContractViolation, FieldDiff
 from contract_core.runtime import ContractRuntime, load_runtime
 
 __version__ = "0.2.0"
 
 __all__ = [
+    "ContractFormatError",
     "ContractRuntime",
     "ContractViolation",
     "FieldDiff",
