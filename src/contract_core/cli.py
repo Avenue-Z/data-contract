@@ -89,3 +89,29 @@ def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     doc = to_odcs(contract, resolver)
     validate_odcs(doc)
     click.echo(f"OK: {contract.system}@{contract.version} — {len(boundaries)} boundaries resolved")
+
+
+@main.command()
+@click.option("--contract", "contract_path", required=True, type=click.Path(exists=True))
+@click.option("--package", "package", required=True)
+@click.option("--tests", "test_paths", multiple=True, required=True,
+              type=click.Path(exists=True))
+def reconcile(contract_path: str, package: str, test_paths: tuple[str, ...]) -> None:
+    """Diff declared vs registered boundaries; enforce raw-boundary drift tests (design)."""
+    from contract_core.reconcile import reconcile as run
+    try:
+        result = run(contract_path, package, [Path(p) for p in test_paths])
+    except ContractFormatError as exc:
+        click.echo("RECONCILE FAILED — malformed contract:")
+        _echo_format_error(exc)
+        sys.exit(1)
+    gating = [f for f in result.findings if f.gating]
+    if gating:
+        click.echo("RECONCILE FAILED:")
+        for f in result.findings:
+            click.echo(f"  - {f.message}")
+        sys.exit(1)
+    for f in result.findings:  # non-gating diagnostics, if any
+        click.echo(f"  - {f.message}")
+    click.echo(f"OK: {result.system}@{result.version} — "
+               f"{result.n_boundaries} boundaries reconciled")

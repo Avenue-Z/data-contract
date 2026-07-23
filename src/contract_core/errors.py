@@ -24,6 +24,21 @@ class FieldDiff(BaseModel):
     samples: list[str] = Field(default_factory=list)
 
 
+class UndeclaredBoundary(KeyError):
+    """A boundary decorator named a boundary the contract does not declare (design §2).
+
+    Raised at the decorator (import) boundary. reconcile classifies it as category B **by
+    type**, reading `.direction` / `.name` — never by parsing this message (design §2; the
+    message-parsing anti-pattern §15 item 5 damns). Subclasses `KeyError` for back-compat
+    with any consumer catching `KeyError` around a decorator.
+    """
+
+    def __init__(self, *, direction: str, name: str) -> None:
+        self.direction = direction
+        self.name = name
+        super().__init__(f"no {direction} boundary named {name!r} in contract")
+
+
 class ContractViolation(Exception):
     def __init__(self, *, boundary: str, schema_ref: str, direction: str,
                  diffs: list[FieldDiff]) -> None:

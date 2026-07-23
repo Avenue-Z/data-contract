@@ -165,3 +165,30 @@ def test_lint_malformed_contract_names_every_key_and_prints_the_hint():
     assert "systemm" in res.output
     assert "verzion" in res.output
     assert "Upgrade the pin" in res.output
+
+
+def _drift_dir(tmp_path):
+    d = tmp_path / "drifts"
+    d.mkdir()
+    (d / "drift_prompts_raw.py").write_text(
+        "import pytest\n@pytest.mark.raw_drift('prompts_raw')\ndef test_x():\n    pass\n")
+    return d
+
+
+def test_reconcile_clean_exits_zero(make_reconcile_pkg, reconcile_sources, tmp_path):
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.boundaries})
+    res = CliRunner().invoke(main, ["reconcile", "--contract", pkg.contract,
+                                    "--package", pkg.package,
+                                    "--tests", str(_drift_dir(tmp_path))])
+    assert res.exit_code == 0, res.output
+    assert "OK: fix-sys@1.0.0" in res.output
+
+
+def test_reconcile_incident_2_replay_exits_one(make_reconcile_pkg, reconcile_sources, tmp_path):
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.input_only})
+    res = CliRunner().invoke(main, ["reconcile", "--contract", pkg.contract,
+                                    "--package", pkg.package,
+                                    "--tests", str(_drift_dir(tmp_path))])
+    assert res.exit_code == 1
+    assert "RECONCILE FAILED" in res.output
+    assert "prompts_raw" in res.output

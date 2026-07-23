@@ -182,6 +182,30 @@ python -m venv /tmp/smoke && /tmp/smoke/bin/pip install \
 
 Expected: `ok`. A failure here is an auth/tag problem, not a library problem.
 
+## 6. If you run the `reconcile` gate
+
+`contract reconcile` enforces R2: every declared `raw` boundary must have a drift test, which it
+finds by looking for the marker `@pytest.mark.raw_drift("<name>")` (decorator position, attribute
+form, one string-literal argument — the `"<name>"` must match the raw boundary's name). A declared
+raw boundary with no such marker is a category-D failure.
+
+reconcile finds the marker by **AST scan** — it never imports or runs your tests — so from
+reconcile's side nothing needs registering. But if you write those drift tests as real collected
+tests (files matching `test_*.py`) and run pytest with `--strict-markers`, pytest rejects the
+unregistered `raw_drift` marker at collection, before reconcile is ever involved. Register it once
+in the consuming repo's `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+markers = [
+    "raw_drift: a drift test guarding a raw boundary (read by `contract reconcile`)",
+]
+```
+
+This is *your* pytest configuration, not something the library ships — `contract-core`'s own suite
+side-steps it by naming its reconcile fixtures `drift_*.py` (never collected), which a consuming
+repo running real drift tests cannot do.
+
 ---
 
 *When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin + deploy token), §3 (the

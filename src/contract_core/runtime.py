@@ -16,7 +16,7 @@ from contract_core.compile.pandera_compile import (
     to_pandera,
 )
 from contract_core.contract import BoundarySpec, Contract
-from contract_core.errors import ContractViolation, FieldDiff
+from contract_core.errors import ContractViolation, FieldDiff, UndeclaredBoundary
 from contract_core.events import EventLog, Result
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
@@ -68,7 +68,10 @@ def _constraint_label(check: str, declared: "FieldSpec | None") -> str:
 
 
 class ContractRuntime:
-    REGISTRY: list[tuple[str, str]] = []
+    # (system, direction, name). `system` attributes each registration to its contract so
+    # reconcile can filter to one contract's boundaries (design §4.1) — without it, two
+    # contracts in one process share an unlabelled list and can false-attribute.
+    REGISTRY: list[tuple[str, str, str]] = []
 
     def __init__(self, contract: Contract, resolver: Resolver,
                  event_log: EventLog | None = None,
@@ -108,7 +111,7 @@ class ContractRuntime:
         for b in group:
             if b.name == name:
                 return b
-        raise KeyError(f"no {direction} boundary named {name!r} in contract")
+        raise UndeclaredBoundary(direction=direction, name=name)
 
     def raw(self, name: str) -> Decorator:
         return self._decorator("raw", name)
@@ -122,7 +125,7 @@ class ContractRuntime:
     def _decorator(self, direction: str, name: str) -> Decorator:
         spec = self._spec(direction, name)
         resolved = self.resolver.resolve(spec.schema)
-        ContractRuntime.REGISTRY.append((direction, name))
+        ContractRuntime.REGISTRY.append((self.contract.system, direction, name))
 
         def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
             @functools.wraps(fn)
@@ -301,6 +304,17 @@ class _DisabledRuntime(ContractRuntime):
 
     def output(self, name: str) -> Decorator:
         return _passthrough
+
+
+def _reset_registry() -> None:
+    """Clear the process-global registration set (design §4).
+
+    Internal — used by reconcile before a force-import and by an autouse test fixture so
+    registry assertions are order-independent (§15 item 5). Not exported; the `runtime`
+    module is already declared private in the package docstring, and `__all__` still lists
+    exactly the six public names.
+    """
+    ContractRuntime.REGISTRY.clear()
 
 
 def load_runtime(
