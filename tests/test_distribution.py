@@ -13,7 +13,9 @@ REPO = Path(__file__).resolve().parents[1]
 # consumer's `from contract_core import ...` line looks like, and duplicating it here is
 # deliberate — the whole point of the test is to prove that line works against a real install,
 # so importing the expected names from the source tree would defeat it.
-PUBLIC_NAMES = ["ContractRuntime", "ContractViolation", "FieldDiff", "load_runtime"]
+PUBLIC_NAMES = [
+    "ContractFormatError", "ContractRuntime", "ContractViolation", "FieldDiff", "load_runtime",
+]
 
 
 def _run(*cmd: str, **kw) -> subprocess.CompletedProcess:
