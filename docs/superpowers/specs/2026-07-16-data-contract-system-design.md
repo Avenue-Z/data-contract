@@ -553,8 +553,7 @@ boundary with a row count and samples.
 **The onboarding-repo-#2 gate is therefore met.** What that does *not* mean is that Phase 1 is done —
 clearing the gate was a precondition for adoption, not the phase. Still open before "new automations
 get contracts by default" is true: `reconcile` and its R3 registration-completeness work, R2's
-drift-test enforcement, the §5.5 authoring skill and R7's adoption measurement, and R10's format
-`apiVersion`. Item 5's library-hygiene list is also still open, and one entry on it now matters more
+drift-test enforcement, the §5.5 authoring skill and R7's adoption measurement. Item 5's library-hygiene list is also still open, and one entry on it now matters more
 than it did: **the event log still has no reader.** `v0.2.0`'s documented adoption path is "adopt the
 constraint-bearing major in `observe`, read the event log, then promote to `enforce`" — that
 instruction currently resolves to "parse the JSONL yourself."
