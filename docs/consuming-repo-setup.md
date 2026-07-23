@@ -206,6 +206,90 @@ This is *your* pytest configuration, not something the library ships — `contra
 side-steps it by naming its reconcile fixtures `drift_*.py` (never collected), which a consuming
 repo running real drift tests cannot do.
 
+## 7. Wiring the gate into CI
+
+`contract lint` + `contract reconcile` only protect you if CI runs them on every PR. This repo ships
+a reusable workflow that does exactly that.
+
+**Prerequisite, not a footnote:** `data-contract` is private, so a reusable workflow it hosts is
+invisible to your repo until an admin enables, once, **Settings → Actions → General → Access →
+"Accessible from repositories in the Avenue-Z organization"** on `data-contract`. A `workflow was not
+found` error means *that setting is off* — it is **not** the `contract-core-token`, which only clones
+the dependency. If the setting cannot be enabled, use the inline alternative below; it calls nothing
+cross-repo.
+
+**Pin the same tag you pin contract-core to.** The workflow ships the CLI flag names at its tag,
+while your `pyproject.toml` (§1) pins the CLI it drives, and a 0.x minor may change that surface (read
+[`CHANGELOG.md`](../CHANGELOG.md)). So the workflow `@tag` and your contract-core pin **must be the
+same tag** — a mismatch is silent CLI breakage, not a warning — and at or above the release that
+introduced the gate.
+
+### Call the reusable workflow
+
+```yaml
+# .github/workflows/contract.yml in YOUR repo
+name: contract
+on:
+  pull_request:
+  push:
+    branches: [main]   # your protected branches
+
+jobs:
+  gate:
+    # Same tag as your contract-core pin (see above).
+    uses: Avenue-Z/data-contract/.github/workflows/contract-gate.yml@v0.4.0
+    with:
+      contract: contract.yaml
+      package: my_pkg              # importable — reconcile imports it to find registered boundaries
+      schemas: |                   # one dir per line
+        schemas
+      tests: |                     # one path per line
+        tests
+    secrets:
+      # A token/deploy key with contents:read on Avenue-Z/data-contract (§1).
+      contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
+```
+
+`schemas` and `tests` are **newline-delimited** — one path per line under a `|` block. A blank or
+trailing line is ignored, so a stray newline will not fail the gate.
+
+### Exit-code semantics
+
+The gate **is** the exit code; nothing parses output. `lint` exits non-zero on a malformed contract,
+malformed schema, or unresolved schema ref. `reconcile` exits non-zero on any gating finding
+(categories P/A/B/C/D — see the reconcile design) and on a malformed contract. Any non-zero fails the
+check. The `raw_drift` marker is read by AST and needs no registration on reconcile's side — but if
+you run your drift tests as collected pytest tests under `--strict-markers`, register the marker as
+§6 shows, or pytest rejects it at collection.
+
+### Inline alternative (no cross-repo call)
+
+If you would rather not depend on the reusable workflow — or cannot enable the Actions-access setting
+above — run the two commands directly. Pin the marketplace actions to your repo's policy.
+
+```yaml
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install and run the gate
+        env:
+          CONTRACT_CORE_TOKEN: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::CONTRACT_CORE_READ_TOKEN is empty"; exit 1; }
+          git config --global \
+            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract".insteadOf \
+            "https://github.com/Avenue-Z/data-contract"
+          pip install .
+          contract lint --contract contract.yaml --schemas schemas
+          contract reconcile --contract contract.yaml --package my_pkg --tests tests
+```
+
 ---
 
 *When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin + deploy token), §3 (the
