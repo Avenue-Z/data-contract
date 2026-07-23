@@ -1,0 +1,183 @@
+# `contract-gate` — wiring the reconcile/lint gate into consuming-repo CI
+
+**Date:** 2026-07-23
+**Status:** Approved for planning
+**Owner:** Paul Ramirez / Engineering
+**Closes:** Phase 1 "CI wiring" (the middle third of "make it stick" = reconcile + CI wiring +
+authoring skill). `reconcile` itself shipped as v0.4.0; this makes it a real, merge-blocking gate
+in the repos that consume it.
+**Parent specs:**
+[`2026-07-16-data-contract-system-design.md`](2026-07-16-data-contract-system-design.md) — §13
+(phased rollout; Phase 1), §14 R3 (the gate), §15 (the "value is in the library, the gate runs in
+consumers" through-line).
+[`2026-07-23-reconcile-registration-completeness-design.md`](2026-07-23-reconcile-registration-completeness-design.md)
+— §3 (command surface & exit codes), §5 (gating vs non-gating findings), §7 (R2 drift-test
+detection). Authority on gate semantics.
+
+## 1. Purpose
+
+`contract reconcile` and `contract lint` exist as CLI commands, but nothing in CI runs them, so the
+gate gates nothing. This spec makes it a merge-blocking gate **in consuming repos** — the repos that
+actually have a first-party contract to reconcile against their code.
+
+The key placement fact (parent spec §15): **this repo is the library, not a consumer.** It has no
+first-party contract — the only contract/schema YAML here are test fixtures. So "wire reconcile into
+CI" is about consuming repos, and the deliverable is a *reusable* mechanism plus the docs a consumer
+needs to adopt it.
+
+## 2. Scope
+
+**In scope:**
+1. A reusable GitHub Actions workflow (`on: workflow_call`) shipped in *this* repo that a consuming
+   repo calls to install its project (which brings in pinned contract-core), then run `lint` +
+   `reconcile` and fail CI on any nonzero exit.
+2. Consumer documentation: a new section in [`docs/consuming-repo-setup.md`](../../consuming-repo-setup.md)
+   with a copy-pasteable `uses:` snippet, a plain inline alternative, exit-code semantics, and a
+   cross-reference to the existing §6 `raw_drift`-marker note.
+3. A `CHANGELOG.md` `[Unreleased]` note recording the new consumer-facing surface.
+
+**Out of scope (YAGNI — decided during brainstorming):**
+- **No self-test job in this repo's CI.** The incident-#2 exit-code contract is already
+  regression-guarded by [`tests/test_cli.py`](../../../tests/test_cli.py) —
+  `test_reconcile_clean_exits_zero` (clean → exit 0) and `test_reconcile_incident_2_replay_exits_one`
+  (broken → exit 1), which run inside the gating `test` matrix job. A self-test job would either
+  duplicate that (by materializing a fixture consumer package that does not exist on disk today) or
+  test reusable-workflow plumbing that cannot faithfully run against *unreleased* PR code, since the
+  workflow installs contract-core by released tag.
+- **No `contract-core-version` workflow input.** The pin lives in the consumer's `pyproject.toml`
+  (§1 of the setup guide) — a single source of truth. A second pin in the workflow could silently
+  disagree with the pyproject pin.
+- **No skip-lint / skip-reconcile knobs, no deploy-key/SSH auth variant.** Not requested.
+- **No changes to [`ci.yml`](../../../.github/workflows/ci.yml) or
+  [`ci-aggregate-gate.sh`](../../../scripts/ci-aggregate-gate.sh).** See §5.
+
+## 3. Placement decision (raised and settled)
+
+The reusable workflow lives **here, in `data-contract`**, not in `Avenue-Z/repo-template`.
+
+- The workflow is intrinsically coupled to contract-core's CLI surface and version. It should be
+  released in lockstep with the CLI it wraps, and referenced by the **same** `@vX.Y.Z` tag consumers
+  already pin contract-core to.
+- `repo-template`'s workflows get copied into *every* generated repo. A reconcile gate is opt-in —
+  only repos that consume contract-core need it — so baking it into the template would ship a dead
+  gate into unrelated repos.
+
+## 4. The reusable workflow — `.github/workflows/contract-gate.yml`
+
+`on: workflow_call` **only**. Consequence worth stating: it never runs on this repo's own
+`pull_request`/`push`, creates **no new check context here**, and therefore cannot touch or hang the
+existing required `ci` aggregate context.
+
+### 4.1 Interface
+
+| Kind | Name | Required | Default | Purpose |
+|---|---|---|---|---|
+| input | `contract` | yes | — | path to the contract file (shared by lint + reconcile) |
+| input | `package` | yes | — | importable package name for `reconcile --package` |
+| input | `schemas` | yes | — | schema dirs for `lint --schemas`, **newline-delimited** |
+| input | `tests` | yes | — | test paths for `reconcile --tests`, **newline-delimited** |
+| input | `python-version` | no | `"3.13"` | matches the library's 3.13 target (`requires-python`) |
+| input | `install-command` | no | `pip install .` | installs the consumer project + its pinned contract-core |
+| secret | `contract-core-token` | yes | — | read access to the private `Avenue-Z/data-contract` for pip |
+
+**Why the multi-value inputs are strings.** `workflow_call` inputs are typed `string`/`number`/
+`boolean` only — no arrays. `--schemas` and `--tests` are both repeatable CLI options, so they arrive
+as **newline-delimited** strings and the job expands each into repeated flags with a
+`while IFS= read -r` loop (robust to values that a whitespace split would mangle; empty lines
+skipped).
+
+**Why `install-command` and not a version input.** For `reconcile --package NAME` to work, the
+consumer's package must be **importable** in the CI env (reconcile imports it to discover registered
+boundaries). That forces installing the consumer's project. `pip install .` does exactly that *and*
+pulls contract-core via the consumer's `pyproject.toml` pin — one install, single source of truth.
+The input exists only so a consumer who needs extras (`pip install ".[ci]"`) can override the default.
+
+### 4.2 Permissions & pinning
+
+- `permissions: contents: read` at the workflow level — least privilege, matching house style
+  ([`ci.yml`](../../../.github/workflows/ci.yml#L10-L11), `sca.yml`, `secret-scan.yml`). The
+  reusable workflow's checkout of the caller repo uses the automatic `GITHUB_TOKEN`.
+- Actions SHA-pinned to the **same** SHAs `ci.yml` already uses:
+  `actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0` and
+  `actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0`.
+
+### 4.3 The single `gate` job
+
+1. **checkout** — `actions/checkout` checks out the *caller's* repository at the caller's ref
+   (default `workflow_call` behavior; uses the auto `GITHUB_TOKEN`, no extra secret).
+2. **setup-python** — `actions/setup-python` with `inputs.python-version`.
+3. **configure git auth** — `set -euo pipefail` (deliberately **no `set -x`**, so the token cannot
+   leak to logs). Token supplied via `env:` from `secrets.contract-core-token`, never interpolated
+   into the script body:
+   ```bash
+   git config --global \
+     url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/".insteadOf \
+     "https://github.com/"
+   ```
+   This authenticates pip's HTTPS clone of the private contract-core dependency.
+4. **install** — run `inputs.install-command`.
+5. **lint** — `set -euo pipefail`; expand `inputs.schemas` (newline-delimited) into repeated
+   `--schemas` flags, then run `contract lint --contract <contract> --schemas ...`.
+6. **reconcile** — `set -euo pipefail`; expand `inputs.tests` into repeated `--tests` flags, then run
+   `contract reconcile --contract <contract> --package <package> --tests ...`.
+
+**The gate is the exit code — nothing parses output.** Per the reconcile design §3: `lint` exits 1
+on a malformed contract, malformed schema, or unresolved ref; `reconcile` exits 1 on any gating
+finding (categories P/A/B/C/D) and on a malformed contract. A nonzero exit fails the step → fails
+the `gate` job → fails the caller's required check. Fail-fast (lint before reconcile), no `|| true`
+anywhere.
+
+## 5. Why this does NOT touch this repo's `ci` gate
+
+The existing required context is the non-matrix `ci` aggregate job. A gating job reaches the merge
+gate only by being named in **both** the `ci` job's `needs:` list **and**
+[`scripts/ci-aggregate-gate.sh`](../../../scripts/ci-aggregate-gate.sh) — a bare `needs:` under
+`if: always()` does not gate. We add **no job to `ci.yml`**: the deliverable is an `on: workflow_call`
+workflow that never executes on this repo's PRs. So there is no new context to wire, nothing to
+extend in the aggregate script, and no risk of hanging the `ci` context PENDING.
+
+## 6. Consumer documentation — new `§7` in `docs/consuming-repo-setup.md`
+
+Inserted after the existing §6 (the `raw_drift` marker note), before the closing italic note, in the
+same terse, caveat-forward tone as the rest of the guide. It covers:
+
+- **Copy-pasteable `uses:` snippet** — a caller job that invokes
+  `Avenue-Z/data-contract/.github/workflows/contract-gate.yml@vX.Y.Z` with the `with:` inputs and an
+  explicit `secrets:\n  contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}` block.
+  Cross-reference §1 for provisioning that read token (deploy key or `contents: read` PAT).
+- **Plain inline alternative** — a hand-rolled job (checkout → setup-python 3.13 → install → run the
+  two commands) for a repo that would rather see the mechanics than call the reusable workflow.
+- **Exit-code semantics** — the "nonzero exit *is* the gate, nothing parses output" contract, with
+  the category list from the reconcile design.
+- **Cross-reference to §6** — register the `raw_drift` marker in the consumer's `pyproject.toml` so
+  `pytest --strict-markers` does not reject it at collection; reconcile itself reads the marker via
+  AST and needs no registration.
+- A note that `schemas` and `tests` are **newline-delimited** in the `with:` block.
+
+## 7. CHANGELOG
+
+A short `[Unreleased]` entry under a `### Added` (or repo-convention) heading: a reusable
+`contract-gate` CI workflow plus the consumer wiring docs. Rationale: the workflow is a **new
+shipped, consumer-facing surface** — consumers reference it by the same tag they pin contract-core
+to, so which release first carries it is information a consumer wiring `@vX.Y.Z` needs. This is a
+CI/docs change, not a library-API change, so no code-behavior note is required.
+
+## 8. Testing & verification
+
+- **actionlint** (or equivalent) on the new workflow — must pass. Install it if absent; do not claim
+  a pass without seeing the output.
+- **No new automated test.** Per §2, the incident-#2 exit-code contract is already covered by
+  `tests/test_cli.py` inside the gating `test` job; the existing suite must still pass
+  (`ruff check .`, `mypy`, `pytest -q`), though this change touches no Python.
+- **Branch flow:** work on a `ci/*` branch, open the PR against `dev`. `.github/` is code-owned, so
+  changes there flow through the normal `ci/* → dev → staging → main` chain.
+
+## 9. Success criteria
+
+1. `.github/workflows/contract-gate.yml` exists, is valid per actionlint, is `on: workflow_call`
+   only, pins actions by SHA, sets `permissions: contents: read`, and runs `lint` then `reconcile`
+   failing on any nonzero exit.
+2. A consumer can copy the `uses:` snippet from the docs and have a working merge-blocking gate,
+   given the read token from §1.
+3. The existing `ci` required context and the matrix/aggregate split are unchanged and unbroken.
+4. `CHANGELOG.md` records the new surface under `[Unreleased]`.
