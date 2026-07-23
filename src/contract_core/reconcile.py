@@ -5,6 +5,9 @@ Pure functions (diff + AST scans + exception classification) plus a thin impure
 orchestrator. Internal module — nothing here is on the public surface (R9).
 """
 import ast
+import importlib
+import pkgutil
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,3 +159,40 @@ def classify_import_error(
                        f"package '{module}' could not be imported: {type(exc).__name__}")
     return Finding("diagnostic", module,
                    f"module '{module}' failed to import: {type(exc).__name__}")
+
+
+def force_import_package(package: str) -> list[Finding]:
+    """Import every module under `package` so its top-level decorators register (design §6.2).
+
+    Evict the package namespace first, so an already-cached module re-executes (reset+import
+    is a no-op otherwise). Top-level import failure is fatal → a single category-P finding,
+    no walk. Then walk: `walk_packages` imports subpackages itself (failures routed through
+    `onerror`); the loop imports only *leaf* modules (`walk_packages` does not), so there is
+    no double-import. Both paths classify via `classify_import_error`.
+    """
+    findings: list[Finding] = []
+    for mod in [m for m in list(sys.modules) if m == package or m.startswith(package + ".")]:
+        del sys.modules[mod]
+
+    try:
+        pkg = importlib.import_module(package)
+    except Exception as exc:  # noqa: BLE001 — every import failure is a finding, not a crash
+        return [classify_import_error(package, exc, fatal=True)]
+
+    pkg_path = getattr(pkg, "__path__", None)
+    if pkg_path is None:  # a single module, already executed by the import above
+        return findings
+
+    def _on_walk_error(name: str) -> None:
+        exc = sys.exc_info()[1]
+        if exc is not None:  # walk calls onerror from inside its except block
+            findings.append(classify_import_error(name, exc))
+
+    for info in pkgutil.walk_packages(pkg_path, package + ".", onerror=_on_walk_error):
+        if info.ispkg:
+            continue  # subpackages are imported (and their errors handled) by walk itself
+        try:
+            importlib.import_module(info.name)
+        except Exception as exc:  # noqa: BLE001
+            findings.append(classify_import_error(info.name, exc))
+    return findings

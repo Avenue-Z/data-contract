@@ -9,6 +9,7 @@ from contract_core.reconcile import (
     Finding,
     classify_import_error,
     diff_boundaries,
+    force_import_package,
     scan_decorator_placement,
     scan_drift_markers,
 )
@@ -220,3 +221,66 @@ def test_classify_fatal_generic_error_is_category_P():
     f = classify_import_error("pkg", ImportError("boom"), fatal=True)
     assert f.category == "P"
     assert f.gating is True
+
+
+def _registered():
+    return {(d, n) for (s, d, n) in ContractRuntime.REGISTRY if s == "fix-sys"}
+
+
+def test_force_import_registers_all_boundaries(make_reconcile_pkg, reconcile_sources):
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.boundaries})
+    findings = force_import_package(pkg.package)
+    assert findings == []
+    assert _registered() == {("raw", "prompts_raw"), ("input", "prompts")}
+
+
+def test_force_import_is_idempotent_in_process(make_reconcile_pkg, reconcile_sources):
+    # B1: the second run must NOT under-register because the module is cached (design §6.2).
+    pkg = make_reconcile_pkg({"boundaries.py": reconcile_sources.boundaries})
+    force_import_package(pkg.package)
+    _reset_registry()
+    force_import_package(pkg.package)  # evict-then-import re-runs the decorators
+    assert _registered() == {("raw", "prompts_raw"), ("input", "prompts")}
+
+
+def test_force_import_top_level_failure_is_category_P(make_reconcile_pkg):
+    pkg = make_reconcile_pkg({"__init__.py": "raise RuntimeError('boom in __init__')\n"})
+    findings = force_import_package(pkg.package)
+    assert [f.category for f in findings] == ["P"]
+
+
+def test_force_import_leaf_failure_is_nongating_diagnostic(make_reconcile_pkg, reconcile_sources):
+    pkg = make_reconcile_pkg({
+        "boundaries.py": reconcile_sources.boundaries,
+        "broken.py": "import a_package_that_does_not_exist\n",
+    })
+    findings = force_import_package(pkg.package)
+    assert [f.category for f in findings] == ["diagnostic"]
+    assert ("input", "prompts") in _registered()  # boundaries survive the sibling's failure
+
+
+def test_force_import_subpackage_init_failure_does_not_abort_walk(
+    make_reconcile_pkg, reconcile_sources
+):
+    # B2-walk: a subpackage __init__ raising a NON-ImportError would terminate walk_packages
+    # with no onerror. It must be caught, and sibling modules still walked (design §6.2).
+    pkg = make_reconcile_pkg({
+        "boundaries.py": reconcile_sources.boundaries,
+        "sub/__init__.py": "raise RuntimeError('boom in subpackage')\n",
+    })
+    findings = force_import_package(pkg.package)
+    assert any(f.category == "diagnostic" for f in findings)  # subpackage surfaced
+    assert ("input", "prompts") in _registered()  # sibling still imported
+
+
+def test_force_import_undeclared_name_is_category_B(make_reconcile_pkg):
+    mod = (
+        "from contract_core import load_runtime\n"
+        "runtime = load_runtime(r'{CONTRACT}', schema_paths=[r'{SCHEMAS}'])\n"
+        "@runtime.input('not-declared')\n"
+        "def load():\n"
+        "    return None\n"
+    )
+    pkg = make_reconcile_pkg({"boundaries.py": mod})
+    findings = force_import_package(pkg.package)
+    assert any(f.category == "B" and f.identifier == "not-declared" for f in findings)
