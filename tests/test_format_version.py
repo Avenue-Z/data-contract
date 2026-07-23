@@ -115,6 +115,37 @@ def test_applicability_error_on_direct_field_construction_is_unwrapped():
         Field(name="brand", type="string", minimum=1)
 
 
+# ---- criterion 7, 6, 10: propagation through the real call sites ----
+
+def test_load_runtime_surfaces_a_malformed_contract_as_a_valueerror(tmp_path, monkeypatch):
+    # §11.1: Contract.from_yaml is on load_runtime's path (runtime.py:325). Criterion 7:
+    # catchable as ValueError, and NOT a ContractViolation.
+    # delenv CONTRACT_DISABLED: with it set, load_runtime returns a disabled no-op that
+    # never calls from_yaml — so the assertion below would never fire (as the existing
+    # test_public_api tests also guard).
+    monkeypatch.delenv("CONTRACT_DISABLED", raising=False)
+    from contract_core import ContractViolation, load_runtime
+    p = tmp_path / "c.yaml"
+    p.write_text("system: x\nversion: 1.0.0\nsurprise: 1\n")
+    with pytest.raises(ContractFormatError) as ei:
+        load_runtime(p, schema_paths=[tmp_path])
+    assert isinstance(ei.value, ValueError)
+    assert not isinstance(ei.value, ContractViolation)
+
+
+def test_resolver_surfaces_a_malformed_schema_as_contract_format_error(tmp_path):
+    # §11.1: resolver.py calls Schema.from_yaml at two sites. A malformed resolved schema
+    # propagates as ContractFormatError, not a bare pydantic/yaml error (criterion 6).
+    from contract_core.resolver import Resolver
+    d = tmp_path / "peec" / "prompts_export"
+    d.mkdir(parents=True)
+    (d / "1.0.0.yaml").write_text(
+        "schema: peec.prompts_export\nversion: 1.0.0\nkind: tabular\n"
+        "fields:\n  - name: x\n    type: int\n    bogus: 1\n")
+    with pytest.raises(ContractFormatError):
+        Resolver([tmp_path]).resolve("peec.prompts_export@1")
+
+
 # ---- criterion 13: format_version never reaches the ODCS export ----
 
 def test_format_version_is_not_a_valid_odcs_key():
