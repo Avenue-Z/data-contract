@@ -7,12 +7,20 @@ Add this to the consuming repo's `pyproject.toml`:
 
 ```toml
 dependencies = [
-  "contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.3.0",
+  "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@vX.Y.Z",
 ]
 ```
 
+Substitute `vX.Y.Z` with a concrete released tag ([`CHANGELOG.md`](../CHANGELOG.md) is the canonical
+list). If you also wire the gate (§7), this pin and the workflow `@tag` **must be the same tag**, at
+or above the release that introduced the gate — see the same-tag rule in §7.
+
 Your lockfile captures the exact resolved commit — the same pin-by-tag / lock-the-exact-version
 discipline we apply to contracts themselves.
+
+**Keep the `.git` suffix.** The `reconcile` gate (§6–§7) scopes its read token to exactly this repo
+by rewriting the `.git` clone URL; a bare `.../data-contract@<tag>` pin would clone unauthenticated
+and fail. It is the canonical `pip` VCS form regardless, so use it everywhere.
 
 **Prerequisite, not a footnote:** `data-contract` is private, so your CI needs read access to it —
 a deploy key or a token with `contents: read` on `Avenue-Z/data-contract`. This is the one
@@ -176,7 +184,7 @@ cut. After cutting a tag, once, from a machine holding only the CI credential:
 
 ```bash
 python -m venv /tmp/smoke && /tmp/smoke/bin/pip install \
-  "contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.1.0"
+  "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@vX.Y.Z"
 /tmp/smoke/bin/python -c "from contract_core import load_runtime; print('ok')"
 ```
 
@@ -213,7 +221,7 @@ a reusable workflow that does exactly that.
 
 **Prerequisite, not a footnote:** `data-contract` is private, so a reusable workflow it hosts is
 invisible to your repo until an admin enables, once, **Settings → Actions → General → Access →
-"Accessible from repositories in the Avenue-Z organization"** on `data-contract`. A `workflow was not
+"Accessible from repositories in the 'Avenue-Z' organization"** on `data-contract`. A `workflow was not
 found` error means *that setting is off* — it is **not** the `contract-core-token`, which only clones
 the dependency. If the setting cannot be enabled, use the inline alternative below; it calls nothing
 cross-repo.
@@ -236,8 +244,8 @@ on:
 
 jobs:
   gate:
-    # Same tag as your contract-core pin (see above).
-    uses: Avenue-Z/data-contract/.github/workflows/contract-gate.yml@v0.4.0
+    # Same tag as your contract-core pin (§1) — see the same-tag rule below.
+    uses: Avenue-Z/data-contract/.github/workflows/contract-gate.yml@vX.Y.Z
     with:
       contract: contract.yaml
       package: my_pkg              # importable — reconcile imports it to find registered boundaries
@@ -250,8 +258,11 @@ jobs:
       contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
 ```
 
-`schemas` and `tests` are **newline-delimited** — one path per line under a `|` block. A blank or
-trailing line is ignored, so a stray newline will not fail the gate.
+`schemas` and `tests` are **newline-delimited** — one path per line under a `|` block. Blank and
+whitespace-only lines *between or after* real entries are ignored, so a stray newline will not fail
+the gate. But `schemas` and `tests` are each **required**: a block with *no* real entry expands to
+zero flags and the gate fails closed with `Missing option '--schemas'` (or `--tests`). Every path
+you list must exist in the checkout — a non-existent or misspelled path fails the same way.
 
 ### Exit-code semantics
 
@@ -283,8 +294,8 @@ jobs:
           set -euo pipefail
           [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::CONTRACT_CORE_READ_TOKEN is empty"; exit 1; }
           git config --global \
-            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract".insteadOf \
-            "https://github.com/Avenue-Z/data-contract"
+            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
+            "https://github.com/Avenue-Z/data-contract.git"
           pip install .
           contract lint --contract contract.yaml --schemas schemas
           contract reconcile --contract contract.yaml --package my_pkg --tests tests

@@ -39,6 +39,14 @@ def test_whitespace_only_line_is_skipped():
     ]
 
 
+def test_surrounding_whitespace_is_trimmed():
+    # A YAML `|` block preserves trailing spaces; an untrimmed value becomes a
+    # non-existent path and reds the gate on a VALID contract — the false red.
+    assert _expand("--schemas", "schemas \n  vendor/schemas\t\n") == [
+        "--schemas", "schemas", "--schemas", "vendor/schemas",
+    ]
+
+
 def test_empty_input_yields_no_flags():
     assert _expand("--schemas", "") == []
     assert _expand("--schemas", "\n\n") == []

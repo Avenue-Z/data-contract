@@ -19,7 +19,12 @@ flag="$1"
 
 # `|| [ -n "$line" ]` so a final line with no trailing newline is still processed.
 while IFS= read -r line || [ -n "${line}" ]; do
+  # Trim surrounding whitespace: a YAML `|` block preserves trailing spaces, and an
+  # untrimmed value (e.g. `schemas `) becomes a non-existent path that reds the gate on
+  # a VALID contract. Internal spaces (a path may contain them) are preserved.
+  line="${line#"${line%%[![:space:]]*}"}"   # strip leading whitespace
+  line="${line%"${line##*[![:space:]]}"}"   # strip trailing whitespace
   # Skip blank / whitespace-only lines — the false-red guard.
-  [ -n "${line//[[:space:]]/}" ] || continue
+  [ -n "${line}" ] || continue
   printf '%s\0%s\0' "${flag}" "${line}"
 done
