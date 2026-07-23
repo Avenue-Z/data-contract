@@ -127,6 +127,25 @@ finding (categories P/A/B/C/D) and on a malformed contract. A nonzero exit fails
 the `gate` job → fails the caller's required check. Fail-fast (lint before reconcile), no `|| true`
 anywhere.
 
+### 4.4 One-time producer-side prerequisite — Actions access sharing (BLOCKER)
+
+`data-contract` is **private**, and GitHub refuses to resolve a reusable workflow from a private repo
+into a *different* repo unless that repo explicitly shares its Actions:
+**Settings → Actions → General → Access → "Accessible from repositories in the `Avenue-Z`
+organization."** This must be enabled **once** on `data-contract` by an org/repo admin. It is not a
+code change and cannot be done in this PR — it is an operational step the rollout depends on.
+
+**This is a distinct credential from `contract-core-token`, and conflating them is the trap.**
+
+| Concern | Governed by | Failure symptom if missing |
+|---|---|---|
+| Resolving `uses: Avenue-Z/data-contract/.github/workflows/contract-gate.yml@tag` | the caller's automatic `GITHUB_TOKEN` **+ the Actions access-sharing setting above** | `error: workflow was not found` before any step runs |
+| pip cloning the private contract-core dependency during install | `secrets.contract-core-token` (§4.1) | a `pip` clone failure at install time |
+
+A consumer can provision `contract-core-token` perfectly and still be stopped cold at
+workflow-resolution if the access setting is off. So the docs (§6) must name this prerequisite, and
+the rollout is not "done" until it is enabled — see §9 criterion #2 and §10.
+
 ## 5. Why this does NOT touch this repo's `ci` gate
 
 The existing required context is the non-matrix `ci` aggregate job. A gating job reaches the merge
@@ -141,12 +160,23 @@ extend in the aggregate script, and no risk of hanging the `ci` context PENDING.
 Inserted after the existing §6 (the `raw_drift` marker note), before the closing italic note, in the
 same terse, caveat-forward tone as the rest of the guide. It covers:
 
+- **The Actions-access prerequisite, stated first** — a short "Prerequisite, not a footnote"
+  callout (matching §1's tone) that `data-contract` must have Actions access-sharing enabled
+  (§4.4), and that a `workflow was not found` error means that setting, **not** the
+  `contract-core-token`. This is the operational landmine that otherwise stops a correctly-wired
+  consumer cold, so it leads the section.
 - **Copy-pasteable `uses:` snippet** — a caller job that invokes
   `Avenue-Z/data-contract/.github/workflows/contract-gate.yml@vX.Y.Z` with the `with:` inputs and an
   explicit `secrets:\n  contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}` block.
   Cross-reference §1 for provisioning that read token (deploy key or `contents: read` PAT).
+- **Which tag to pin** — pin `@` the **same tag as contract-core, at or above the release that first
+  shipped the gate** (not a bare `@vX.Y.Z`). You cannot reference the workflow at a tag older than
+  the one that introduced it — the same chicken-and-egg the §5 by-hand smoke test hits: the release
+  that ships the workflow is the first that can call it.
 - **Plain inline alternative** — a hand-rolled job (checkout → setup-python 3.13 → install → run the
-  two commands) for a repo that would rather see the mechanics than call the reusable workflow.
+  two commands) for a repo that would rather see the mechanics than call the reusable workflow. This
+  alternative also side-steps the Actions-access prerequisite entirely (nothing to resolve
+  cross-repo), which is a legitimate reason to prefer it.
 - **Exit-code semantics** — the "nonzero exit *is* the gate, nothing parses output" contract, with
   the category list from the reconcile design.
 - **Cross-reference to §6** — register the `raw_drift` marker in the consumer's `pyproject.toml` so
@@ -169,8 +199,20 @@ CI/docs change, not a library-API change, so no code-behavior note is required.
 - **No new automated test.** Per §2, the incident-#2 exit-code contract is already covered by
   `tests/test_cli.py` inside the gating `test` job; the existing suite must still pass
   (`ruff check .`, `mypy`, `pytest -q`), though this change touches no Python.
-- **Branch flow:** work on a `ci/*` branch, open the PR against `dev`. `.github/` is code-owned, so
-  changes there flow through the normal `ci/* → dev → staging → main` chain.
+- **Accepted residual risk — stated, not hidden.** actionlint validates the workflow's *syntax*, not
+  that the reusable-workflow plumbing works end-to-end. Because the workflow installs contract-core
+  by released tag, it cannot be faithfully exercised against unreleased PR code (§2), so the **first
+  real proof it works end-to-end is a consumer wiring it post-release** — the same posture as the
+  existing §5 by-hand smoke test. This is an accepted limitation, not a gap actionlint closes.
+- **Branch flow:** work on a `ci/*` branch, open the PR against `dev`. The chain
+  `ci/* → dev → staging → main` is enforced by
+  [`guard-base-branch.yml`](../../../.github/workflows/guard-base-branch.yml) /
+  [`scripts/check-base-branch.sh`](../../../scripts/check-base-branch.sh) — **not** by code
+  ownership. There is no `CODEOWNERS` file, and [`SECURITY.md`](../../../SECURITY.md) states plainly
+  that `.github/CODEOWNERS` (were it present) "forces nothing" here: with
+  `require_code_owner_review: false` and zero required approvals in the ruleset, code ownership only
+  auto-*requests* a reviewer, it does not gate. So do not lean on code ownership as a control — the
+  base-branch guard is the real one.
 
 ## 9. Success criteria
 
@@ -178,6 +220,16 @@ CI/docs change, not a library-API change, so no code-behavior note is required.
    only, pins actions by SHA, sets `permissions: contents: read`, and runs `lint` then `reconcile`
    failing on any nonzero exit.
 2. A consumer can copy the `uses:` snippet from the docs and have a working merge-blocking gate,
-   given the read token from §1.
+   given (a) the read token from §1 **and** (b) the one-time Actions access-sharing setting on
+   `data-contract` from §4.4/§10. Without (b), workflow resolution fails before any step runs, so
+   this criterion is *not* satisfied by the PR alone — it requires the §10 operational step.
 3. The existing `ci` required context and the matrix/aggregate split are unchanged and unbroken.
 4. `CHANGELOG.md` records the new surface under `[Unreleased]`.
+
+## 10. Rollout — the operational step outside this PR
+
+This PR ships code and docs; it does not, by itself, make the gate callable. Before or at the release
+that first carries the workflow, an `Avenue-Z` admin must enable **Settings → Actions → General →
+Access → "Accessible from repositories in the organization"** on `data-contract` (§4.4). This is a
+one-time repo setting, not a code change, and it is the difference between "the workflow exists" and
+"a consumer can call it." The plan must surface this as an explicit hand-off item, not bury it.
