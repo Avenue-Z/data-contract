@@ -9,6 +9,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from contract_core.errors import UndeclaredBoundary
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -121,3 +123,36 @@ def scan_drift_markers(files: Iterable[Path]) -> set[str]:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             covered.add(arg.value)
     return covered
+
+
+def _find_undeclared(exc: BaseException) -> UndeclaredBoundary | None:
+    """Walk the exception chain — a module may catch and re-raise `from` an
+    UndeclaredBoundary; missing it would silently drop an undeclared boundary (design §6.2)."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, UndeclaredBoundary):
+            return cur
+        cur = cur.__cause__ or cur.__context__
+    return None
+
+
+def classify_import_error(
+    module: str, exc: BaseException, *, fatal: bool = False
+) -> Finding:
+    """Turn an import-time exception into a finding (design §6.2).
+
+    `UndeclaredBoundary` anywhere in the chain gates as B (by type, never message-parsing).
+    Otherwise: P when fatal (top-level import — no category-A backstop below it), else a
+    non-gating diagnostic. Message carries only the exception type, never env-specific
+    text (§5.2)."""
+    ub = _find_undeclared(exc)
+    if ub is not None:
+        return Finding("B", ub.name,
+                       f"decorator names an undeclared boundary '{ub.name}' (in {module})")
+    if fatal:
+        return Finding("P", module,
+                       f"package '{module}' could not be imported: {type(exc).__name__}")
+    return Finding("diagnostic", module,
+                   f"module '{module}' failed to import: {type(exc).__name__}")

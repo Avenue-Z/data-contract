@@ -7,6 +7,7 @@ from contract_core.contract import Contract
 from contract_core.errors import UndeclaredBoundary
 from contract_core.reconcile import (
     Finding,
+    classify_import_error,
     diff_boundaries,
     scan_decorator_placement,
     scan_drift_markers,
@@ -185,3 +186,37 @@ def test_scan_empty_when_no_markers(tmp_path):
     p = tmp_path / "d.py"
     p.write_text("def test_x():\n    pass\n")
     assert scan_drift_markers([p]) == set()
+
+
+def test_classify_undeclared_boundary_is_category_B():
+    exc = UndeclaredBoundary(direction="input", name="typo")
+    f = classify_import_error("pkg.mod", exc)
+    assert f.category == "B"
+    assert f.identifier == "typo"
+    assert "typo" in f.message
+
+
+def test_classify_chained_undeclared_boundary_still_category_B():
+    inner = UndeclaredBoundary(direction="raw", name="rawtypo")
+    try:
+        try:
+            raise inner
+        except UndeclaredBoundary as e:
+            raise RuntimeError("wrapped") from e
+    except RuntimeError as outer:
+        f = classify_import_error("pkg.mod", outer)
+    assert f.category == "B"
+    assert f.identifier == "rawtypo"
+
+
+def test_classify_generic_error_is_nongating_diagnostic():
+    f = classify_import_error("pkg.mod", ModuleNotFoundError("no numpy"))
+    assert f.category == "diagnostic"
+    assert f.gating is False
+    assert "pkg.mod" in f.message
+
+
+def test_classify_fatal_generic_error_is_category_P():
+    f = classify_import_error("pkg", ImportError("boom"), fatal=True)
+    assert f.category == "P"
+    assert f.gating is True
