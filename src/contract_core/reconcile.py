@@ -98,3 +98,26 @@ def scan_decorator_placement(files: Iterable[Path]) -> list[Finding]:
                         f"boundary decorator @…{dec.func.attr}('{name}') not at module "
                         f"top level ({path}:{node.lineno})"))
     return sorted(findings, key=_sort_key)
+
+
+def scan_drift_markers(files: Iterable[Path]) -> set[str]:
+    """The set of raw-boundary names covered by an `@…raw_drift("name")` decorator (§7.1).
+
+    Decorator position only, attribute form (`.attr == "raw_drift"`), string-literal args
+    only — every residual fails toward firing category D (over-strict, never a false pass)."""
+    covered: set[str] = set()
+    for path in files:
+        try:
+            tree = ast.parse(path.read_text(), filename=str(path))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+                        and dec.func.attr == "raw_drift"):
+                    for arg in dec.args:
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            covered.add(arg.value)
+    return covered

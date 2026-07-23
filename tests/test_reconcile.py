@@ -5,7 +5,12 @@ import pytest
 
 from contract_core.contract import Contract
 from contract_core.errors import UndeclaredBoundary
-from contract_core.reconcile import Finding, diff_boundaries, scan_decorator_placement
+from contract_core.reconcile import (
+    Finding,
+    diff_boundaries,
+    scan_decorator_placement,
+    scan_drift_markers,
+)
 from contract_core.resolver import Resolver
 from contract_core.runtime import ContractRuntime, _reset_registry
 
@@ -140,3 +145,43 @@ def test_conditional_top_level_decorator_is_flagged(tmp_path):
 def test_syntax_error_file_is_skipped_not_crashed(tmp_path):
     files = _write(tmp_path, "def broken(:\n")
     assert scan_decorator_placement(files) == []
+
+
+def test_scan_collects_raw_drift_marker_names(tmp_path):
+    p = tmp_path / "test_drift.py"
+    p.write_text(
+        "import pytest\n"
+        "@pytest.mark.raw_drift('prompts_raw')\n"
+        "def test_rejects_unknown_shape():\n"
+        "    pass\n"
+    )
+    assert scan_drift_markers([p]) == {"prompts_raw"}
+
+
+def test_scan_matches_bare_mark_attribute_form(tmp_path):
+    p = tmp_path / "d.py"
+    p.write_text(
+        "from pytest import mark\n"
+        "@mark.raw_drift('a')\n"
+        "def test_x():\n"
+        "    pass\n"
+    )
+    assert scan_drift_markers([p]) == {"a"}
+
+
+def test_scan_ignores_non_literal_marker_arg(tmp_path):
+    # a name/reference is invisible to a non-importing scan → uncovered (over-strict, §7.1).
+    p = tmp_path / "d.py"
+    p.write_text(
+        "import pytest\n"
+        "@pytest.mark.raw_drift(SOME_CONST)\n"
+        "def test_x():\n"
+        "    pass\n"
+    )
+    assert scan_drift_markers([p]) == set()
+
+
+def test_scan_empty_when_no_markers(tmp_path):
+    p = tmp_path / "d.py"
+    p.write_text("def test_x():\n    pass\n")
+    assert scan_drift_markers([p]) == set()
