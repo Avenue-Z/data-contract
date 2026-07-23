@@ -1,7 +1,10 @@
 # tests/test_reconcile.py
 from pathlib import Path
 
+import pytest
+
 from contract_core.contract import Contract
+from contract_core.errors import UndeclaredBoundary
 from contract_core.resolver import Resolver
 from contract_core.runtime import ContractRuntime, _reset_registry
 
@@ -37,3 +40,19 @@ def test_reset_registry_clears_entries():
     assert ContractRuntime.REGISTRY  # non-empty
     _reset_registry()
     assert ContractRuntime.REGISTRY == []
+
+
+def test_spec_raises_undeclared_boundary_with_structured_fields():
+    _reset_registry()
+    rt = _rt("sys-a")
+    with pytest.raises(UndeclaredBoundary) as ei:
+        @rt.input("not-declared")
+        def load():
+            return None
+    assert ei.value.direction == "input"
+    assert ei.value.name == "not-declared"
+
+
+def test_undeclared_boundary_is_a_keyerror():
+    # subclasses KeyError so any existing `except KeyError` around a decorator still catches it.
+    assert issubclass(UndeclaredBoundary, KeyError)

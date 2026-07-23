@@ -16,7 +16,7 @@ from contract_core.compile.pandera_compile import (
     to_pandera,
 )
 from contract_core.contract import BoundarySpec, Contract
-from contract_core.errors import ContractViolation, FieldDiff
+from contract_core.errors import ContractViolation, FieldDiff, UndeclaredBoundary
 from contract_core.events import EventLog, Result
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
@@ -111,7 +111,7 @@ class ContractRuntime:
         for b in group:
             if b.name == name:
                 return b
-        raise KeyError(f"no {direction} boundary named {name!r} in contract")
+        raise UndeclaredBoundary(direction=direction, name=name)
 
     def raw(self, name: str) -> Decorator:
         return self._decorator("raw", name)
