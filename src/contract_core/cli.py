@@ -4,11 +4,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import click
-import yaml
-from pydantic import ValidationError
 
 from contract_core.compile.odcs import to_odcs, validate_odcs
 from contract_core.contract import Contract
+from contract_core.errors import ContractFormatError
 from contract_core.resolver import Resolver, SchemaNotFound, parse_semver
 from contract_core.schema import Schema
 
@@ -28,28 +27,17 @@ def _lintable_schema_files(schema_dirs: Sequence[str]) -> list[Path]:
     return files
 
 
-def _load_failure(path: Path) -> str | None:
-    """Why `path` is not a loadable schema, or None if it loads.
+def _echo_format_error(exc: ContractFormatError, *, loc_prefix: str = "") -> None:
+    """Render a `ContractFormatError` identically wherever it surfaces (design §5.2.1).
 
-    Catches all three ways `Schema.from_yaml` fails, not just the pydantic one. It reads
-    the file (OSError) and runs `yaml.safe_load` (YAMLError) BEFORE `model_validate`
-    (ValidationError) — and lint now opens files nobody has ever validated, so the first
-    two are reachable in a way they were not when lint only parsed referenced schemas.
-    An uncaught one exits with a traceback and empty stdout, from the one command whose
-    entire job is a readable diagnostic.
+    Each per-key error is a bulleted line; `loc_prefix` identifies which file it came from
+    when several files are in play (the schema arm). The hint, when present, gets its own
+    bare line — no path, no bullet — so it renders as prose, not as another offending key.
     """
-    try:
-        Schema.from_yaml(path)
-    except ValidationError as exc:
-        # `msg` is pydantic's documented per-error field; the "Value error, " prefix it
-        # wraps a raised ValueError in is presentation, so strip it if present.
-        return str(exc.errors()[0]["msg"]).removeprefix("Value error, ")
-    except yaml.YAMLError as exc:
-        # A syntax error: report the problem line, not the multi-line marked-up dump.
-        return f"invalid YAML — {' '.join(str(exc).split())}"
-    except OSError as exc:
-        return f"unreadable — {exc.strerror or exc}"
-    return None
+    for loc, msg in exc.errors:
+        click.echo(f"  - {loc_prefix}{loc}: {msg}")
+    if exc.hint:
+        click.echo(f"  {exc.hint}")
 
 
 @click.group()
@@ -63,17 +51,28 @@ def main() -> None:
               type=click.Path(exists=True))
 def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     """Validate a contract: resolve every schema ref and compile to valid ODCS."""
-    contract = Contract.from_yaml(contract_path)
+    try:
+        contract = Contract.from_yaml(contract_path)
+    except ContractFormatError as exc:
+        click.echo("LINT FAILED — malformed contract:")
+        _echo_format_error(exc)
+        sys.exit(1)
     resolver = Resolver(list(schema_dirs))
-    malformed: list[str] = []
+    header_printed = False
     for path in _lintable_schema_files(schema_dirs):
-        reason = _load_failure(path)
-        if reason is not None:
-            malformed.append(f"{path}: {reason}")
-    if malformed:
-        click.echo("LINT FAILED — malformed schemas:")
-        for line in malformed:
-            click.echo(f"  - {line}")
+        try:
+            Schema.from_yaml(path)
+        except ContractFormatError as exc:
+            if not header_printed:
+                click.echo("LINT FAILED — malformed schemas:")
+                header_printed = True
+            _echo_format_error(exc, loc_prefix=f"{path}: ")
+        except OSError as exc:
+            if not header_printed:
+                click.echo("LINT FAILED — malformed schemas:")
+                header_printed = True
+            click.echo(f"  - {path}: unreadable — {exc.strerror or exc}")
+    if header_printed:
         sys.exit(1)
     boundaries = [*contract.raw, *contract.inputs, *contract.outputs]
     unresolved = []

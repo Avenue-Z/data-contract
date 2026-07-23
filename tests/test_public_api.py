@@ -14,6 +14,7 @@ from contract_core import ContractViolation, FieldDiff, load_runtime
 # under 0.x a breaking change is allowed, but it must be conscious, reviewed, and carry a
 # minor bump — this test is what makes "silent" impossible.
 FROZEN_SURFACE = {
+    "ContractFormatError",
     "ContractRuntime",
     "ContractViolation",
     "FieldDiff",

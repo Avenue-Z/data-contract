@@ -1,8 +1,19 @@
 # src/contract_core/types.py
 import math
+from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
+
+from contract_core.errors import ContractFormatError
 
 FieldType = Literal["string", "int", "float", "bool", "date", "datetime"]
 
@@ -10,6 +21,60 @@ FieldType = Literal["string", "int", "float", "bool", "date", "datetime"]
 # targets agree what it means.
 _BOUND_TYPES = {"int", "float"}
 _ENUM_TYPES = {"string", "int", "bool"}
+
+# Design §4.5. Two names, two jobs. Both "v1" today; they diverge the moment v2 exists.
+READABLE_FORMAT_VERSIONS: frozenset[str] = frozenset({"v1"})  # the dispatcher's input set
+CURRENT_FORMAT_VERSION: str = "v1"                            # the model's only legal value
+
+
+def reject_non_current_format_version(v: str) -> str:
+    """Shared body of `_only_current_format` on `Schema` and `Contract` (design §4.5).
+
+    Through `from_yaml` the dispatcher has already normalized to current; this fires on
+    direct construction (§4.5 pt 2) and catches an upcast that forgot to rewrite the key.
+    """
+    if v != CURRENT_FORMAT_VERSION:
+        raise ValueError(
+            f"format_version {v!r} is not the current format {CURRENT_FORMAT_VERSION!r}")
+    return v
+
+
+def normalize_format_version(data: dict[str, Any], path: str) -> dict[str, Any]:
+    """Carry a raw authored dict forward to the current format, or refuse it (§4.5).
+
+    A missing stamp means v1: a file with no version predates versioning. An unreadable
+    version is refused here, on the raw dict, before the model — the dispatcher half of the
+    two rejecting sites in §4.5. There is no upcast chain today (§10); the key is rewritten
+    to current so the "model only sees the current format" invariant is structural, not a
+    coincidence of v1 == current.
+    """
+    found = data.get("format_version", "v1")
+    if not isinstance(found, str) or found not in READABLE_FORMAT_VERSIONS:
+        raise ContractFormatError.unreadable_version(
+            path=path, found=found, supported=READABLE_FORMAT_VERSIONS)
+    return {**data, "format_version": CURRENT_FORMAT_VERSION}
+
+
+def load_yaml_model[ModelT: BaseModel](model: type[ModelT], path: str | Path) -> ModelT:
+    """Read an authored YAML file into `model`, wrapping format failures (design §5.1).
+
+    OSError from read_text leaks intentionally — an unreadable file is not a malformed one.
+    """
+    p = Path(path)
+    text = p.read_text()
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ContractFormatError(
+            path=str(p),
+            errors=[("<file>", f"invalid YAML — {' '.join(str(exc).split())}")],
+            hint=None,
+        ) from exc
+    data = normalize_format_version(raw, str(p)) if isinstance(raw, dict) else raw
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        raise ContractFormatError.from_validation_error(str(p), exc) from exc
 
 
 def _value_matches_type(value: Any, declared: str) -> bool:
@@ -23,6 +88,8 @@ def _value_matches_type(value: Any, declared: str) -> bool:
 
 
 class Field(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     type: FieldType
     required: bool = True

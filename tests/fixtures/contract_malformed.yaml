@@ -1,0 +1,8 @@
+# DELIBERATELY INVALID: an unknown top-level key. Strict keys (design §3) reject it, and
+# `lint` must report it as a diagnostic rather than tracebacking (criterion 15).
+system: aivx-reports
+version: 1.0.0
+systemm: typo-of-system
+inputs:
+  - name: peec_prompts
+    schema: peec.prompts_export@1

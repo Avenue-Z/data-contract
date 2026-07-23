@@ -7,7 +7,7 @@ Add this to the consuming repo's `pyproject.toml`:
 
 ```toml
 dependencies = [
-  "contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.1.0",
+  "contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.3.0",
 ]
 ```
 
@@ -49,6 +49,17 @@ def load_prompts():
 `avenue-z-schemas` path is later prepended to that default, a different schema may resolve. That
 will be called out as a **behavior** change in [`CHANGELOG.md`](../CHANGELOG.md) — a stable signature
 is not a promise of stable resolved bytes.
+
+### Format version and strict keys
+
+Authored files are strict: a key `contract-core` does not recognise is a hard error at
+load, not a silently-ignored line. A typo (`requird:`) fails loudly. Add only keys this
+version documents.
+
+Files may carry an optional `format_version: v1` at the top level of a schema or contract.
+It is optional — a file with no stamp is read as `v1`. It bumps only when the *meaning* of
+an existing key changes, never when a key is added. A `format_version` this reader cannot
+read is refused with an upgrade hint, rather than mis-parsed.
 
 ### Value constraints
 

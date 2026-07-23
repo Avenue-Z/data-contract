@@ -11,6 +11,37 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-22
+
+### Added
+
+- **`format_version` on schema and contract files** — an optional, major-only format
+  stamp (`v1`). A missing stamp means `v1`. A version this reader cannot carry forward is
+  refused loudly at load. `format_version` is not exported to the ODCS document.
+- **`ContractFormatError`** is now part of the public API (surface 5 → 6). It is raised
+  only at the `from_yaml` boundary, subclasses `ValueError`, and carries `.path`,
+  `.errors`, and `.hint` so tooling can render per-key diagnostics.
+
+### Changed
+
+- **BREAKING — unknown keys in authored files now fail; previously they were silently
+  ignored.** A schema or contract carrying a key `contract-core` does not recognise — a
+  typo, a hand-added annotation, or a key from a newer `contract-core` — now raises
+  `ContractFormatError` at load instead of being dropped. This is the fix for the silent
+  weakening described in the R10 design: a reader that dropped a key it did not understand
+  validated a weaker form than the file it read. Any consuming repo with a stray key in an
+  authored file must remove it or move to the reader that understands it.
+- `Schema.from_yaml` and `Contract.from_yaml` now raise `ContractFormatError` rather than
+  letting `pydantic.ValidationError` or `yaml.YAMLError` escape. Direct model construction
+  is unchanged and still raises `ValidationError`.
+
+### Minimum supported reader
+
+Consuming repos should pin **`contract-core >= 0.3.0`**. Earlier readers silently ignore
+keys they do not understand (including the `0.2.0` value constraints), so a file authored
+against a newer format is validated as a weaker form with no error. `0.3.0` is the first
+reader that refuses rather than under-validates.
+
 ## [0.2.0] — 2026-07-22
 
 ### Added
