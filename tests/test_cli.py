@@ -111,3 +111,27 @@ def test_lint_names_every_unknown_key_and_prints_the_hint():
     assert "pattern" in res.output
     assert "max_length" in res.output
     assert "Upgrade the pin" in res.output
+
+
+def test_lint_malformed_contract_names_every_key_and_prints_the_hint():
+    # Drives the contract arm directly (not the schema-malformed path above): a contract
+    # with TWO unknown top-level keys, against a valid --schemas root so schema resolution
+    # is never reached. Asserts the `if exc.hint:` branch at cli.py actually fires.
+    import tempfile
+    import textwrap
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "contract_two_unknown_keys.yaml"
+        p.write_text(textwrap.dedent("""\
+            system: aivx-reports
+            version: 1.0.0
+            systemm: typo-of-system
+            verzion: typo-of-version
+        """))
+        res = CliRunner().invoke(main, [
+            "lint", "--contract", str(p), "--schemas", str(FIX / "schemas")])
+    assert res.exit_code == 1
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+    assert "LINT FAILED — malformed contract:" in res.output
+    assert "systemm" in res.output
+    assert "verzion" in res.output
+    assert "Upgrade the pin" in res.output
