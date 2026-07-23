@@ -328,3 +328,17 @@ def test_reconcile_missing_drift_test_is_category_D(
     result = reconcile(pkg.contract, pkg.package, [empty])
     d = [f for f in result.findings if f.category == "D"]
     assert [f.identifier for f in d] == ["prompts_raw"]
+
+
+def test_findings_render_in_pinned_category_order():
+    from contract_core.reconcile import _sort_key
+    unsorted = [
+        Finding("D", "prompts_raw", "d"),
+        Finding("A", "input:x", "a"),
+        Finding("diagnostic", "m", "diag"),
+        Finding("P", "pkg", "p"),
+        Finding("C", "f.py:3", "c"),
+        Finding("B", "typo", "b"),
+    ]
+    ordered = [f.category for f in sorted(unsorted, key=_sort_key)]
+    assert ordered == ["P", "A", "B", "C", "D", "diagnostic"]

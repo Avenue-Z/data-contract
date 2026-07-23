@@ -11,6 +11,25 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+### Added
+
+- **`contract reconcile` subcommand** — the registration-completeness gate (R3 + R2). Force-imports
+  every module under a given `--package`, diffs declared boundaries against what actually
+  registered at import time, lint-bans boundary decorators outside module top level (category C),
+  and flags a declared raw boundary with no `@pytest.mark.raw_drift("<name>")` drift test
+  (category D). This is a static existence+linkage check, not test execution — see the reconcile
+  design doc §7.2 for the stated ceiling. New internal `UndeclaredBoundary` exception (raised when a
+  decorator names a boundary the contract does not declare); it is not part of the public API.
+
+### Changed
+
+- **Internal — `ContractRuntime.REGISTRY` now records registrations keyed by `(system, direction,
+  name)`** instead of by contract alone, closing the process-global registry leakage across
+  contracts/tests (§15 item 5). A new internal `_reset_registry()` plus an autouse pytest fixture
+  clear it between tests. This is a behavior change to internal state only — the frozen 6-name
+  public surface (`load_runtime`, `ContractRuntime`, `ContractViolation`, `FieldDiff`,
+  `__version__`, `ContractFormatError`) is unchanged.
+
 ## [0.3.0] — 2026-07-22
 
 ### Added
