@@ -146,7 +146,7 @@ def test_registry_is_populated(tmp_path):
     def load():
         return _good_df()
 
-    assert ("input", "prompts") in ContractRuntime.REGISTRY
+    assert ("demo", "input", "prompts") in ContractRuntime.REGISTRY
 
 
 def _payload_runtime(tmp_path, mode="enforce"):
