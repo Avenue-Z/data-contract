@@ -30,7 +30,8 @@ needs to adopt it.
 **In scope:**
 1. A reusable GitHub Actions workflow (`on: workflow_call`) shipped in *this* repo that a consuming
    repo calls to install its project (which brings in pinned contract-core), then run `lint` +
-   `reconcile` and fail CI on any nonzero exit.
+   `reconcile` and fail CI on any nonzero exit — plus a small, unit-tested `scripts/expand-flags.sh`
+   it relies on for the newline→repeated-flags expansion (§4.3.1).
 2. Consumer documentation: a new section in [`docs/consuming-repo-setup.md`](../../consuming-repo-setup.md)
    with a copy-pasteable `uses:` snippet, a plain inline alternative, exit-code semantics, and a
    cross-reference to the existing §6 `raw_drift`-marker note.
@@ -91,9 +92,9 @@ existing required `ci` aggregate context.
 
 **Why the multi-value inputs are strings.** `workflow_call` inputs are typed `string`/`number`/
 `boolean` only — no arrays. `--schemas` and `--tests` are both repeatable CLI options, so they arrive
-as **newline-delimited** strings and the job expands each into repeated flags with a
-`while IFS= read -r` loop (robust to values that a whitespace split would mangle; empty lines
-skipped).
+as **newline-delimited** strings, and the job expands each into repeated flags via the tested
+`scripts/expand-flags.sh` (§4.3.1) — not an inline loop — because this is the workflow's most
+false-red-prone logic and the repo's convention is to put such logic in a unit-tested script.
 
 **Why `install-command` and not a version input.** For `reconcile --package NAME` to work, the
 consumer's package must be **importable** in the CI env (reconcile imports it to discover registered
@@ -112,10 +113,15 @@ The input exists only so a consumer who needs extras (`pip install ".[ci]"`) can
 
 ### 4.3 The single `gate` job
 
-1. **checkout** — `actions/checkout` checks out the *caller's* repository at the caller's ref
-   (default `workflow_call` behavior; uses the auto `GITHUB_TOKEN`, no extra secret).
-2. **setup-python** — `actions/setup-python` with `inputs.python-version`.
-3. **configure git auth** — `set -euo pipefail` (deliberately **no `set -x`**, so the token cannot
+1. **checkout (caller)** — `actions/checkout` checks out the *caller's* repository at the caller's
+   ref (default `workflow_call` behavior; uses the auto `GITHUB_TOKEN`, no extra secret). This is the
+   workspace `lint`/`reconcile` run against (the caller's contract + package).
+2. **checkout (this repo's scripts)** — see §4.3.1: resolve the workflow's own tag from
+   `github.workflow_ref` and check out `Avenue-Z/data-contract` at that tag into `./.contract-core/`
+   (authed with `contract-core-token`), so the **tested** `scripts/expand-flags.sh` is present on the
+   runner. This is what lets step 5/6 run tested logic rather than an inline copy.
+3. **setup-python** — `actions/setup-python` with `inputs.python-version`.
+4. **configure git auth** — `set -euo pipefail` (deliberately **no `set -x`**, so the token cannot
    leak to logs). Token supplied via `env:` from `secrets.contract-core-token`, never interpolated
    into the script body. **Two hardening rules the prose depends on:**
    - **Guard the empty token explicitly.** `set -u` catches an *unset* variable but not a
@@ -124,7 +130,11 @@ The input exists only so a consumer who needs extras (`pip install ".[ci]"`) can
      `https://x-access-token:@github.com/…` rewrite and pip fails many steps later with an opaque
      auth error — the very "shows up as a pip clone failure, not as anything contract-shaped" mode
      [`consuming-repo-setup.md`](../../consuming-repo-setup.md#L19) warns about. So the step MUST
-     begin: `[ -n "${CONTRACT_CORE_TOKEN}" ] || { echo "::error::contract-core-token is empty"; exit 1; }`
+     begin: `[ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::contract-core-token is empty"; exit 1; }`
+     — note the `:-` default: without it a *genuinely unset* var (possible on the §6 inline path,
+     where the `env:` mapping isn't guaranteed) trips `set -u` with a raw `unbound variable` *before*
+     the clear `::error::` can fire, resurrecting the opaque failure the guard exists to kill. With
+     `:-`, the clear message wins on both the reusable-workflow and inline paths.
    - **Scope the rewrite to exactly the one private repo**, not all of `github.com` — otherwise the
      credential rides *every* `github.com` HTTPS clone during install (transitive git deps,
      submodules, a setuptools-scm tag fetch), which contradicts the least-privilege posture of §4.2:
@@ -134,17 +144,43 @@ The input exists only so a consumer who needs extras (`pip install ".[ci]"`) can
      "https://github.com/Avenue-Z/data-contract"
    ```
    This authenticates pip's HTTPS clone of the private contract-core dependency and nothing else.
-4. **install** — run `inputs.install-command`.
-5. **lint** — `set -euo pipefail`; expand `inputs.schemas` (newline-delimited) into repeated
-   `--schemas` flags, then run `contract lint --contract <contract> --schemas ...`.
-6. **reconcile** — `set -euo pipefail`; expand `inputs.tests` into repeated `--tests` flags, then run
-   `contract reconcile --contract <contract> --package <package> --tests ...`.
+5. **install** — run `inputs.install-command`.
+6. **lint** — `set -euo pipefail`; build the repeated `--schemas` flags by piping `inputs.schemas`
+   through `./.contract-core/scripts/expand-flags.sh --schemas` (§4.3.1), then run
+   `contract lint --contract <contract> <expanded --schemas flags>`.
+7. **reconcile** — `set -euo pipefail`; same expansion for `inputs.tests` via `expand-flags.sh
+   --tests`, then run `contract reconcile --contract <contract> --package <package> <expanded --tests flags>`.
 
 **The gate is the exit code — nothing parses output.** Per the reconcile design §3: `lint` exits 1
 on a malformed contract, malformed schema, or unresolved ref; `reconcile` exits 1 on any gating
 finding (categories P/A/B/C/D) and on a malformed contract. A nonzero exit fails the step → fails
 the `gate` job → fails the caller's required check. Fail-fast (lint before reconcile), no `|| true`
 anywhere.
+
+### 4.3.1 The riskiest logic lives in a tested script, per house convention
+
+The newline→repeated-flags expansion is the one piece of non-trivial, easy-to-botch logic in the
+workflow, and its worst failure is a **false red**: a stray trailing empty line becomes
+`--schemas ""`, which trips `click.Path(exists=True)` ([`cli.py`](../../../src/contract_core/cli.py#L50))
+and fails the gate on a *valid* contract. The repo already has a written rule for exactly this
+([`ci-aggregate-gate.sh`](../../../scripts/ci-aggregate-gate.sh#L10): logic goes in a script so
+tests exercise the *same* logic the workflow runs — the `check-base-branch.sh` pattern). So:
+
+- **`scripts/expand-flags.sh <flag>`** — reads a newline-delimited value list on **stdin**, **skips
+  empty/blank lines** (killing the trailing-newline false-red), and emits the `<flag> <value>` pairs
+  in a **NUL-delimited** form the caller consumes with `mapfile -d ''` — NUL-safe so a value can
+  contain anything a path legally can. It lives in `data-contract` and is **unit-tested in this
+  repo's own CI** (a `tests/`-level test, the same "template-tests exercise the script" posture as
+  `ci-aggregate-gate.sh`). Empty input → zero flags → the CLI's own `required=True` reports the
+  missing option, not a spurious `""`.
+- **Why the step-2 self-checkout exists.** A `workflow_call` workflow's `actions/checkout` gets the
+  **caller's** repo, so `data-contract/scripts/` is not on the runner. To run the *tested* script
+  (not a drift-prone inline copy — the exact thing the convention forbids), step 2 checks out
+  `Avenue-Z/data-contract` at the workflow's **own** resolved tag into `./.contract-core/`. The tag
+  is read from `github.workflow_ref` (format `owner/repo/path@ref`; take `${GITHUB_WORKFLOW_REF##*@}`,
+  yielding e.g. `refs/tags/v0.5.0`, which `actions/checkout`'s `ref:` accepts), and the private
+  checkout is authed with `contract-core-token`. This guarantees the script version matches the
+  workflow version — no third pin to drift.
 
 ### 4.4 One-time producer-side prerequisite — Actions access sharing (BLOCKER)
 
@@ -163,7 +199,7 @@ code change and cannot be done in this PR — it is an operational step the roll
 
 A consumer can provision `contract-core-token` perfectly and still be stopped cold at
 workflow-resolution if the access setting is off. So the docs (§6) must name this prerequisite, and
-the rollout is not "done" until it is enabled — see §9 criterion #2 and §10.
+the rollout is not "done" until it is enabled — see §9 criterion #3 and §10.
 
 ## 5. Why this does NOT touch this repo's `ci` gate
 
@@ -224,16 +260,23 @@ CI/docs change, not a library-API change, so no code-behavior note is required.
 
 - **actionlint** (or equivalent) on the new workflow — must pass. Install it if absent; do not claim
   a pass without seeing the output.
-- **No new automated test.** Per §2, the incident-#2 exit-code contract is already covered by
-  `tests/test_cli.py` inside the gating `test` job; the existing suite must still pass
-  (`ruff check .`, `mypy`, `pytest -q`), though this change touches no Python.
-- **Accepted residual risk — stated, not hidden.** actionlint validates the workflow's *syntax*, not
-  that the steps run the commands or that exit codes propagate to the gate. So the **behavioral half
-  of §9 criterion #1 is verified by inspection, not by CI** — and, because the workflow installs
-  contract-core by released tag, it cannot be faithfully exercised against unreleased PR code (§2).
-  The **first real proof it works end-to-end is a consumer wiring it post-release** — the same
-  posture as the existing §5 by-hand smoke test. This covers both criterion #1's runtime half and
-  criterion #2; treat neither as CI-proven.
+- **`scripts/expand-flags.sh` gets a unit test in this repo's CI** (§4.3.1) — the one piece of
+  workflow logic that *can* be tested without a runner is, following the `ci-aggregate-gate.sh`
+  convention. Cases: multi-line input → repeated flags; **trailing/blank lines skipped** (the
+  false-red guard); empty input → zero flags; a value with an awkward character survives the
+  NUL-delimited round-trip. This test runs in the gating `test` job, so the expansion is **proven
+  before a consumer's PR is the test case** — it is *not* in the residual-risk bucket below.
+- **The incident-#2 exit-code contract** is already covered by `tests/test_cli.py` inside the gating
+  `test` job; the existing suite must still pass (`ruff check .`, `mypy`, `pytest -q`). The only new
+  Python-adjacent artifact is the shell script above and its test.
+- **Accepted residual risk — stated, not hidden.** The expansion logic is now unit-tested (above),
+  so it is *out* of this bucket. What remains: actionlint validates the workflow's *syntax*, not that
+  the step **wiring** runs end-to-end — the self-checkout + ref-resolution, install, git-auth, and
+  exit-code propagation to the gate are verified by **inspection**, not CI, because the workflow
+  installs contract-core by released tag and so cannot be faithfully exercised against unreleased PR
+  code (§2). So the **plumbing half of §9 criterion #1, and criterion #3, are first really proven by a
+  consumer wiring it post-release** — the same posture as the existing §5 by-hand smoke test.
+  Treat that plumbing as inspection-verified, not CI-proven.
 - **Branch flow:** work on a `ci/*` branch, open the PR against `dev`. The chain
   `ci/* → dev → staging → main` is enforced by
   [`guard-base-branch.yml`](../../../.github/workflows/guard-base-branch.yml) /
@@ -248,16 +291,19 @@ CI/docs change, not a library-API change, so no code-behavior note is required.
 
 1. `.github/workflows/contract-gate.yml` exists, is valid per actionlint, is `on: workflow_call`
    only, pins actions by SHA, sets `permissions: contents: read`, guards an empty token, scopes the
-   `insteadOf` rewrite to the one private repo, and runs `lint` then `reconcile` failing on any
-   nonzero exit. *actionlint proves the shape; the runtime behavior (steps run, exit codes
-   propagate) is verified by inspection here and first-consumer adoption — see §8's residual-risk
-   note.*
-2. A consumer can copy the `uses:` snippet from the docs and have a working merge-blocking gate,
+   `insteadOf` rewrite to the one private repo, expands flags via the tested `scripts/expand-flags.sh`
+   (not an inline loop), and runs `lint` then `reconcile` failing on any nonzero exit. *actionlint
+   proves the shape and the flag-expansion is unit-tested (§8); the remaining step **wiring** (steps
+   run, exit codes propagate) is verified by inspection here and first-consumer adoption — see §8's
+   residual-risk note.*
+2. `scripts/expand-flags.sh` exists and its unit test passes in the gating `test` job — multi-line →
+   repeated flags, blank/trailing lines skipped, empty input → zero flags, awkward value survives.
+3. A consumer can copy the `uses:` snippet from the docs and have a working merge-blocking gate,
    given (a) the read token from §1 **and** (b) the one-time Actions access-sharing setting on
    `data-contract` from §4.4/§10. Without (b), workflow resolution fails before any step runs, so
    this criterion is *not* satisfied by the PR alone — it requires the §10 operational step.
-3. The existing `ci` required context and the matrix/aggregate split are unchanged and unbroken.
-4. `CHANGELOG.md` records the new surface under `[Unreleased]`.
+4. The existing `ci` required context and the matrix/aggregate split are unchanged and unbroken.
+5. `CHANGELOG.md` records the new surface under `[Unreleased]`.
 
 ## 10. Rollout — the operational step outside this PR
 
