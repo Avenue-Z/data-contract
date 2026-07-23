@@ -2,13 +2,20 @@
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from contract_core.types import Field
+from contract_core.types import (
+    CURRENT_FORMAT_VERSION,
+    Field,
+    load_yaml_model,
+    reject_non_current_format_version,
+)
 
 
 class Schema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    format_version: str = CURRENT_FORMAT_VERSION
     # `schema` intentionally matches the YAML key; it shadows BaseModel.schema (deprecated).
     schema: str  # type: ignore[assignment]
     version: str
@@ -20,6 +27,8 @@ class Schema(BaseModel):
     def ref(self) -> str:
         return f"{self.schema}@{self.version}"
 
+    _only_current_format = field_validator("format_version")(reject_non_current_format_version)
+
     @model_validator(mode="after")
     def _exactly_one_body(self) -> "Schema":
         if (self.fields is None) == (self.json_schema is None):
@@ -30,5 +39,4 @@ class Schema(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Schema":
-        data = yaml.safe_load(Path(path).read_text())
-        return cls.model_validate(data)
+        return load_yaml_model(cls, path)
