@@ -5,6 +5,7 @@ import pytest
 
 from contract_core.contract import Contract
 from contract_core.errors import UndeclaredBoundary
+from contract_core.reconcile import Finding, diff_boundaries
 from contract_core.resolver import Resolver
 from contract_core.runtime import ContractRuntime, _reset_registry
 
@@ -56,3 +57,30 @@ def test_spec_raises_undeclared_boundary_with_structured_fields():
 def test_undeclared_boundary_is_a_keyerror():
     # subclasses KeyError so any existing `except KeyError` around a decorator still catches it.
     assert issubclass(UndeclaredBoundary, KeyError)
+
+
+def test_finding_gating_flag():
+    assert Finding("A", "input:x", "msg").gating is True
+    assert Finding("diagnostic", "m", "msg").gating is False
+
+
+def test_diff_reports_declared_but_unregistered_as_category_A():
+    declared = {("input", "prompts"), ("raw", "prompts_raw")}
+    registered = {("input", "prompts")}
+    findings = diff_boundaries(declared, registered)
+    assert [f.category for f in findings] == ["A"]
+    assert findings[0].identifier == "raw:prompts_raw"
+
+
+def test_diff_reverse_is_nongating_diagnostic():
+    findings = diff_boundaries(
+        declared={("input", "x")}, registered={("input", "x"), ("input", "stray")}
+    )
+    assert len(findings) == 1
+    assert findings[0].category == "diagnostic"
+    assert findings[0].gating is False
+
+
+def test_diff_clean_returns_nothing():
+    s = {("input", "x")}
+    assert diff_boundaries(s, s) == []
