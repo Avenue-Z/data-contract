@@ -9,6 +9,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 `contract-core` is **pre-1.0**. Under 0.x semantics a **minor** bump may carry breaking
 changes to the public API or the authored format. Read the entry before moving a pin.
 
+## [Unreleased]
+
+### Added
+
+- **`contract-gate` reusable CI workflow** (`.github/workflows/contract-gate.yml`, `on:
+  workflow_call`) — a consuming repo calls it to install its project, run `contract lint` +
+  `contract reconcile`, and fail CI on any gating finding, turning the reconcile gate into a real
+  merge block. Pin it at the **same tag** as your contract-core dependency. See
+  [`docs/consuming-repo-setup.md`](docs/consuming-repo-setup.md) §7. One-time enablement required:
+  private-repo reusable-workflow "Actions access" sharing on this repo.
+
 ## [0.4.0] — 2026-07-23
 
 ### Added
