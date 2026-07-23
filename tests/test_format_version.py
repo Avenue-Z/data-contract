@@ -77,6 +77,15 @@ def test_explicit_v1_parses(tmp_path):
     assert Schema.from_yaml(p).format_version == "v1"
 
 
+def test_a_list_format_version_is_refused_not_a_leaked_typeerror(tmp_path):
+    # A YAML `format_version:` followed by an indented block (or `{}`) parses to a
+    # list/dict, which is unhashable — `found not in READABLE_FORMAT_VERSIONS` must not
+    # raise a bare TypeError past from_yaml's ContractFormatError/ValidationError net.
+    p = _write(tmp_path, {"format_version": ["v1"], **VALID_SCHEMA})
+    with pytest.raises(ContractFormatError):
+        Schema.from_yaml(p)
+
+
 def test_unreadable_version_through_from_yaml_is_refused_naming_found_and_supported(tmp_path):
     # Criterion 5 (dispatcher half): v2 is not in READABLE today.
     assert "v2" not in READABLE_FORMAT_VERSIONS
@@ -156,3 +165,24 @@ def test_format_version_is_not_a_valid_odcs_key():
     import jsonschema
     with pytest.raises(jsonschema.ValidationError):
         validate_odcs(doc | {"format_version": "v1"})
+
+
+def test_format_version_does_not_reach_a_real_odcs_export(tmp_path):
+    # Criterion 13, end to end: a real Schema (carrying format_version, per Control B
+    # above) compiled through the actual to_odcs entry point never surfaces the key —
+    # not at the document's top level, nor on any inlined schema block.
+    from contract_core.compile.odcs import to_odcs
+    from contract_core.resolver import Resolver
+
+    FIX = Path(__file__).parent / "fixtures"
+    contract = Contract(
+        system="demo", version="1.0.0",
+        inputs=[{"name": "prompts", "schema": "peec.prompts_export@1.0.0",
+                 "source": {"kind": "file", "format": "csv"}}],
+    )
+    resolver = Resolver([FIX / "schemas"])
+    doc = to_odcs(contract, resolver)
+    assert "format_version" not in doc
+    for block in doc["schema"]:
+        assert "format_version" not in block
+    validate_odcs(doc)

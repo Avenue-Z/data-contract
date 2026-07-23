@@ -28,7 +28,7 @@ def normalize_format_version(data: dict[str, Any], path: str) -> dict[str, Any]:
     coincidence of v1 == current.
     """
     found = data.get("format_version", "v1")
-    if found not in READABLE_FORMAT_VERSIONS:
+    if not isinstance(found, str) or found not in READABLE_FORMAT_VERSIONS:
         raise ContractFormatError.unreadable_version(
             path=path, found=found, supported=READABLE_FORMAT_VERSIONS)
     return {**data, "format_version": CURRENT_FORMAT_VERSION}
