@@ -113,6 +113,36 @@ def test_lint_names_every_unknown_key_and_prints_the_hint():
     assert "Upgrade the pin" in res.output
 
 
+def test_lint_schema_hint_is_not_glued_to_the_path():
+    # Regression: the schema arm used to prefix EVERY rendered line — including the hint —
+    # with "{path}: ", so the hint read as "path/to/9.0.0.yaml: The file was likely
+    # authored against a newer contract-core... Upgrade the pin ...". The contract arm
+    # already rendered the hint on its own bare line; the two arms must match.
+    import tempfile
+    import textwrap
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d) / "peec" / "prompts_export"
+        root.mkdir(parents=True)
+        (root / "9.0.0.yaml").write_text(textwrap.dedent("""\
+            schema: peec.prompts_export
+            version: 9.0.0
+            kind: tabular
+            fields:
+              - name: prompt
+                type: string
+                pattern: "^x$"
+                max_length: 5
+        """))
+        res = CliRunner().invoke(main, [
+            "lint", "--contract", str(FIX / "contract_lintable.yaml"),
+            "--schemas", str(FIX / "schemas"), "--schemas", d])
+    assert res.exit_code == 1
+    lines = res.output.splitlines()
+    hint_lines = [line for line in lines if "Upgrade the pin" in line]
+    assert hint_lines, res.output
+    assert all(":" not in line.split("Upgrade the pin")[0] for line in hint_lines), res.output
+
+
 def test_lint_malformed_contract_names_every_key_and_prints_the_hint():
     # Drives the contract arm directly (not the schema-malformed path above): a contract
     # with TWO unknown top-level keys, against a valid --schemas root so schema resolution

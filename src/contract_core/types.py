@@ -27,6 +27,18 @@ READABLE_FORMAT_VERSIONS: frozenset[str] = frozenset({"v1"})  # the dispatcher's
 CURRENT_FORMAT_VERSION: str = "v1"                            # the model's only legal value
 
 
+def reject_non_current_format_version(v: str) -> str:
+    """Shared body of `_only_current_format` on `Schema` and `Contract` (design §4.5).
+
+    Through `from_yaml` the dispatcher has already normalized to current; this fires on
+    direct construction (§4.5 pt 2) and catches an upcast that forgot to rewrite the key.
+    """
+    if v != CURRENT_FORMAT_VERSION:
+        raise ValueError(
+            f"format_version {v!r} is not the current format {CURRENT_FORMAT_VERSION!r}")
+    return v
+
+
 def normalize_format_version(data: dict[str, Any], path: str) -> dict[str, Any]:
     """Carry a raw authored dict forward to the current format, or refuse it (§4.5).
 

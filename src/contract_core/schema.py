@@ -4,7 +4,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from contract_core.types import CURRENT_FORMAT_VERSION, Field, load_yaml_model
+from contract_core.types import (
+    CURRENT_FORMAT_VERSION,
+    Field,
+    load_yaml_model,
+    reject_non_current_format_version,
+)
 
 
 class Schema(BaseModel):
@@ -22,15 +27,7 @@ class Schema(BaseModel):
     def ref(self) -> str:
         return f"{self.schema}@{self.version}"
 
-    @field_validator("format_version")
-    @classmethod
-    def _only_current_format(cls, v: str) -> str:
-        # Through from_yaml the dispatcher has already normalized to current; this fires on
-        # direct construction (§4.5 pt 2) and catches an upcast that forgot to rewrite the key.
-        if v != CURRENT_FORMAT_VERSION:
-            raise ValueError(
-                f"format_version {v!r} is not the current format {CURRENT_FORMAT_VERSION!r}")
-        return v
+    _only_current_format = field_validator("format_version")(reject_non_current_format_version)
 
     @model_validator(mode="after")
     def _exactly_one_body(self) -> "Schema":

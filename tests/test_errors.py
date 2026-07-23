@@ -1,4 +1,5 @@
 # tests/test_errors.py
+import pytest
 from pydantic import ValidationError
 
 import contract_core
@@ -98,11 +99,10 @@ def test_format_error_render_appends_hint_when_present():
 
 def test_from_validation_error_hints_only_on_extra_forbidden():
     # An extra key -> hint. Reconstruct a real pydantic ValidationError via a strict model.
-    try:
+    with pytest.raises(ValidationError) as ei:
         Schema.model_validate({"schema": "a.b", "version": "1.0.0", "kind": "tabular",
                                "fields": [{"name": "x", "type": "int"}], "surprise": 1})
-    except ValidationError as exc:
-        err = ContractFormatError.from_validation_error("s.yaml", exc)
+    err = ContractFormatError.from_validation_error("s.yaml", ei.value)
     assert any("surprise" in loc for loc, _ in err.errors)
     assert err.hint is not None and "Upgrade the pin" in err.hint
 
@@ -112,11 +112,10 @@ def test_from_validation_error_no_hint_on_an_applicability_error():
     # Unlike the extra-forbidden case above, this one does not depend on Schema becoming
     # strict in Task 2: Field._constraints_match_the_declared_type (types.py) already
     # rejects min_length on a non-string field today, so this passes now, not xfail.
-    try:
+    with pytest.raises(ValidationError) as ei:
         Schema.model_validate({"schema": "a.b", "version": "1.0.0", "kind": "tabular",
                                "fields": [{"name": "x", "type": "int", "min_length": 1}]})
-    except ValidationError as exc:
-        err = ContractFormatError.from_validation_error("s.yaml", exc)
+    err = ContractFormatError.from_validation_error("s.yaml", ei.value)
     assert err.hint is None
 
 

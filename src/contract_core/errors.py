@@ -86,12 +86,13 @@ class ContractFormatError(ValueError):
     def from_validation_error(cls, path: str, exc: ValidationError) -> "ContractFormatError":
         # Every error, not just the first (§5.2.1). `msg`'s "Value error, " prefix is
         # pydantic presentation over a raised ValueError; strip it, as `cli` already did.
+        raw = exc.errors()
         errors = [
             (".".join(str(p) for p in e["loc"]),
              str(e["msg"]).removeprefix("Value error, "))
-            for e in exc.errors()
+            for e in raw
         ]
-        unknown_keys = any(e["type"] == "extra_forbidden" for e in exc.errors())
+        unknown_keys = any(e["type"] == "extra_forbidden" for e in raw)
         hint = _UPGRADE_HINT.format(ver=_reader_version()) if unknown_keys else None
         return cls(path=path, errors=errors, hint=hint)
 

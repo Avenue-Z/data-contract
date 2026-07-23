@@ -27,24 +27,17 @@ def _lintable_schema_files(schema_dirs: Sequence[str]) -> list[Path]:
     return files
 
 
-def _load_failure(path: Path) -> list[str] | None:
-    """Rendered diagnostic lines for why `path` is not loadable, or None if it loads.
+def _echo_format_error(exc: ContractFormatError, *, loc_prefix: str = "") -> None:
+    """Render a `ContractFormatError` identically wherever it surfaces (design §5.2.1).
 
-    `Schema.from_yaml` now wraps both the pydantic and the YAML failure into one
-    `ContractFormatError` (design §5.1), so lint renders its `.errors` — one line per
-    offending key path (§5.2.1) — plus its `.hint` when present. `OSError` still leaks
-    from `from_yaml` and is caught here; an unreadable file is not a malformed one.
+    Each per-key error is a bulleted line; `loc_prefix` identifies which file it came from
+    when several files are in play (the schema arm). The hint, when present, gets its own
+    bare line — no path, no bullet — so it renders as prose, not as another offending key.
     """
-    try:
-        Schema.from_yaml(path)
-    except ContractFormatError as exc:
-        lines = [f"{loc}: {msg}" for loc, msg in exc.errors]
-        if exc.hint:
-            lines.append(exc.hint)
-        return lines
-    except OSError as exc:
-        return [f"unreadable — {exc.strerror or exc}"]
-    return None
+    for loc, msg in exc.errors:
+        click.echo(f"  - {loc_prefix}{loc}: {msg}")
+    if exc.hint:
+        click.echo(f"  {exc.hint}")
 
 
 @click.group()
@@ -62,22 +55,24 @@ def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
         contract = Contract.from_yaml(contract_path)
     except ContractFormatError as exc:
         click.echo("LINT FAILED — malformed contract:")
-        for loc, msg in exc.errors:
-            click.echo(f"  - {loc}: {msg}")
-        if exc.hint:
-            click.echo(f"  {exc.hint}")
+        _echo_format_error(exc)
         sys.exit(1)
     resolver = Resolver(list(schema_dirs))
-    malformed: list[str] = []
+    header_printed = False
     for path in _lintable_schema_files(schema_dirs):
-        reasons = _load_failure(path)
-        if reasons is not None:
-            for reason in reasons:
-                malformed.append(f"{path}: {reason}")
-    if malformed:
-        click.echo("LINT FAILED — malformed schemas:")
-        for line in malformed:
-            click.echo(f"  - {line}")
+        try:
+            Schema.from_yaml(path)
+        except ContractFormatError as exc:
+            if not header_printed:
+                click.echo("LINT FAILED — malformed schemas:")
+                header_printed = True
+            _echo_format_error(exc, loc_prefix=f"{path}: ")
+        except OSError as exc:
+            if not header_printed:
+                click.echo("LINT FAILED — malformed schemas:")
+                header_printed = True
+            click.echo(f"  - {path}: unreadable — {exc.strerror or exc}")
+    if header_printed:
         sys.exit(1)
     boundaries = [*contract.raw, *contract.inputs, *contract.outputs]
     unresolved = []
