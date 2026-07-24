@@ -1,0 +1,28 @@
+# TEMPLATE — contract.yaml for a MEDIATED-SOURCE automation (API / MCP / LLM).
+# A mediated source gets TWO boundaries: a `raw` one at the vendor edge (catches drift) and a
+# normalized `input` one (protects downstream). See references/boundary-decision.md.
+# Save at the repo root as `contract.yaml`.
+
+system: tiktok-brand-pulse      # NOT `name:`
+version: 1.0.0
+# mode starts at `observe` (validate + log, never fail) — the on-ramp. Confirm the shape on
+# live data by reading the event log, then promote each boundary to `enforce` (SKILL.md Phase C).
+raw:
+  # The per-call-site raw payload — IS schema'd (a common mistake is to omit this schema).
+  # Its shape is a function of the specific request, so it is NOT reused across systems.
+  # REQUIRES a companion @pytest.mark.raw_drift("tiktok_raw") test, or reconcile fails (category D).
+  - name: tiktok_raw
+    schema: tiktok.raw_report@1
+    source: {kind: api, format: json}
+    mode: observe               # observe | warn | enforce — promote to enforce once confirmed
+inputs:
+  # The normalized, reusable shape the adapter produces.
+  - name: campaign_metrics
+    schema: tiktok.campaign_metrics@1
+    source: {kind: api, format: json}
+    mode: observe
+outputs:
+  - name: report
+    schema: brandpulse.report@1
+    sink: {kind: file, format: json}
+    mode: observe
