@@ -24,6 +24,14 @@ changes to the public API or the authored format. Read the entry before moving a
   release that ships the gate** — this is the same-tag floor §7 refers to: pin the workflow `uses:`
   and your contract-core dependency at `v0.5.0` or later, both at the identical tag. The consumer
   pin must use the `.git@<tag>` URL form so the workflow's scoped token rewrite resolves (§1).
+- **`authoring-data-contracts` skill** (`skills/authoring-data-contracts/`) — the §5.5 authoring
+  skill (design R7). A companion process skill that extends the superpowers spec→plan flow: the spec
+  emits a `contract.yaml` + schemas, the plan lists the boundary decorators, and every `raw` boundary
+  gets its `@pytest.mark.raw_drift` companion test. Ships copy-edit templates (schemas, contracts,
+  runtime wiring with the kill switch + absent-library fallback, drift test, CI gate) and a worked
+  example proven green through `contract lint` + `contract reconcile`. See
+  [`docs/authoring-skill-and-spec-plan-flow.md`](docs/authoring-skill-and-spec-plan-flow.md). Not part
+  of the installable `contract-core` package; distributed via the Avenue Z marketplace.
 
 ## [0.4.0] — 2026-07-23
 
