@@ -27,6 +27,9 @@ tests/
 ```
 
 ### `contract.yaml`
+Modes are shown at `enforce` — the *end* state, after the observe→enforce promotion below. A new
+automation starts every boundary at `mode: observe` (as the templates ship) and promotes once the
+shape is confirmed on live data.
 ```yaml
 system: tiktok-brand-pulse
 version: 1.0.0
@@ -115,7 +118,11 @@ from pathlib import Path
 
 try:
     from contract_core import load_runtime
-    _ROOT = Path(__file__).resolve().parent.parent
+    _HERE = Path(__file__).resolve()
+    # Walk up to the dir holding contract.yaml — works for a flat OR a src/ layout.
+    _ROOT = next((p for p in _HERE.parents if (p / "contract.yaml").exists()), None)
+    if _ROOT is None:
+        raise FileNotFoundError(f"contract.yaml not found in any parent of {_HERE}")
     runtime = load_runtime(str(_ROOT / "contract.yaml"),
                            schema_paths=[str(_ROOT / "schemas")])
 except ImportError:                         # §4 absent-library fallback — imports nothing from the lib

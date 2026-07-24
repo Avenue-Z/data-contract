@@ -21,7 +21,16 @@ from pathlib import Path
 try:
     from contract_core import load_runtime
 
-    _ROOT = Path(__file__).resolve().parent.parent
+    # _ROOT is the directory holding contract.yaml + schemas/. Walk UP to find it so this
+    # works for BOTH a flat layout (<repo>/<pkg>/boundaries.py) and a src/ layout
+    # (<repo>/src/<pkg>/boundaries.py) — a hardcoded `.parent.parent` breaks on src/.
+    _HERE = Path(__file__).resolve()
+    _ROOT = next((p for p in _HERE.parents if (p / "contract.yaml").exists()), None)
+    if _ROOT is None:
+        # Fail loudly, not silently: the library deliberately has no auto-degrade for a
+        # missing contract (consuming-repo-setup §3). The ImportError branch below is ONLY
+        # for the library being absent, and must not swallow this.
+        raise FileNotFoundError(f"contract.yaml not found in any parent of {_HERE}")
     # load_runtime honors CONTRACT_DISABLED (§3) itself — no per-call opt-in can defeat that switch.
     runtime = load_runtime(
         str(_ROOT / "contract.yaml"),

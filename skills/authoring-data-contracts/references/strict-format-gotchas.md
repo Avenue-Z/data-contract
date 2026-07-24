@@ -21,9 +21,11 @@ guess keys. Each landmine below is a real error an agent hit authoring from scra
 A strict-key rejection often prints:
 
 > The file was likely authored against a newer contract-core. Upgrade the pin, or author the file
-> against 0.1.0. See CHANGELOG.md.
+> against `<your installed contract-core version>`. See CHANGELOG.md.
 
-On a file **you just wrote**, this is almost always a **wrong or misplaced key**, not a version
+(The version in the real message is interpolated from your **installed** `contract-core`, e.g.
+`0.5.0` — not a fixed number.) On a file **you just wrote**, this is almost always a **wrong or
+misplaced key**, not a version
 mismatch. `format_version` only bumps when the *meaning* of an existing key changes. Check the
 offending key (the `loc` before the colon) against a template before touching your pin.
 
