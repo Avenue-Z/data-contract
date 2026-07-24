@@ -1,0 +1,31 @@
+# TEMPLATE — a payload schema (a nested / JSON object; validated with Pydantic / jsonschema).
+# Save at:  schemas/<platform>/<name>/<version>.yaml
+#   e.g.    schemas/brandpulse/report/1.0.0.yaml
+# Use `payload` for API bodies, LLM results, and report documents.
+# A payload schema may use `fields:` (flat, shown here) OR a `json_schema:` block — exactly one,
+# and `json_schema:` is allowed ONLY on kind: payload.
+
+schema: brandpulse.report        # <platform>.<name>
+version: 1.0.0
+kind: payload
+fields:
+  - name: brand
+    type: string
+    required: true
+    min_length: 1                # a real brand string is non-empty
+  - name: pulse_score
+    type: float
+    required: true
+    minimum: 0.0                 # bounded deliverable
+    maximum: 1.0
+  - name: window
+    type: string
+    required: true
+
+# Alternative body — a raw JSON Schema (only on kind: payload). Use for deeply nested shapes:
+# json_schema:
+#   type: object
+#   required: [brand, pulse_score]
+#   properties:
+#     brand: {type: string, minLength: 1}
+#     pulse_score: {type: number, minimum: 0.0, maximum: 1.0}

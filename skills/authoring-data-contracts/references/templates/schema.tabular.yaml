@@ -1,0 +1,29 @@
+# TEMPLATE — a tabular schema (rows & columns; validated with Pandera).
+# Save at:  schemas/<platform>/<name>/<version>.yaml
+#   e.g.    schemas/tiktok/campaign_metrics/1.0.0.yaml
+# The path, the filename semver, and the dotted `schema:` below must all agree.
+# Author the fields from the REAL columns of the real export — never placeholders.
+
+schema: tiktok.campaign_metrics   # <platform>.<name>
+version: 1.0.0                    # semver; must equal the filename (1.0.0.yaml)
+kind: tabular
+fields:
+  - name: campaign_id
+    type: string                 # string | int | float | bool | date | datetime
+    required: true               # default true — shown for clarity
+  - name: spend
+    type: float
+    required: true
+    nullable: false              # default false — shown for clarity
+  - name: impressions
+    type: int
+    required: true
+    nullable: false
+  - name: date
+    type: string
+    required: true
+  # Optional value constraints (adding one later is a MAJOR bump):
+  #   enum: ["a", "b"]        # string / int / bool
+  #   minimum: 0             # int / float
+  #   maximum: 1000000       # int / float
+  #   min_length: 1          # string, >= 1

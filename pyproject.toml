@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contract-core"
-version = "0.4.0"
+version = "0.5.0"
 description = "Data contract core library — schemas, contracts, compilers, runtime validation."
 requires-python = ">=3.13"
 dependencies = [
@@ -47,6 +47,10 @@ addopts = "--strict-config --strict-markers"
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# The authoring-skill templates under skills/ are illustrative teaching snippets — they carry
+# intentional placeholder imports (`from my_pkg.boundaries import ...`) and `...` bodies, so they
+# cannot and should not satisfy the first-party lint. They are not importable source.
+extend-exclude = ["skills/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
