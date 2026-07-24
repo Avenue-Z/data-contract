@@ -1,0 +1,19 @@
+# TEMPLATE — contract.yaml for a FILE-INGEST automation (the common case).
+# A file/CSV source is NOT mediated, so there is a single normalized `input` boundary — no `raw`.
+# Save at the repo root as `contract.yaml`.
+#
+# Top level is `system:` + `version:` (NOT `name:`). Groups are `inputs:` / `outputs:` (plural).
+# Every boundary references a schema by `platform.name@major` — never inline a shape.
+
+system: sentiment-digest        # NOT `name:` — this is the automation's name
+version: 1.0.0
+inputs:
+  - name: sentiment_scores
+    schema: sentiment.scores@1  # resolves to schemas/sentiment/scores/<semver>.yaml
+    source: {kind: file, format: csv}
+    mode: enforce               # observe | warn | enforce — start at observe, promote to enforce
+outputs:
+  - name: digest
+    schema: sentiment.digest@1
+    sink: {kind: file, format: json}
+    mode: enforce
