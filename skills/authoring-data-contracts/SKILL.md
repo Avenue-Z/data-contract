@@ -81,21 +81,23 @@ major-pinned `platform.name@major`:
 ```yaml
 system: tiktok-brand-pulse           # NOT `name:`
 version: 1.0.0
+# Start every boundary at `observe`; promote to `enforce` once the shape is confirmed on live
+# data (Phase C). `observe | warn | enforce`.
 raw:                                 # only for mediated sources
   - name: tiktok_raw
     schema: tiktok.raw_report@1      # yes — raw is schema'd too (the per-call-site shape)
     source: {kind: api, format: json}
-    mode: enforce
+    mode: observe
 inputs:                              # plural
   - name: campaign_metrics
     schema: tiktok.campaign_metrics@1
     source: {kind: file, format: csv}
-    mode: enforce
+    mode: observe
 outputs:                             # plural
   - name: report
     schema: brandpulse.report@1
     sink: {kind: file, format: json}
-    mode: enforce
+    mode: observe
 ```
 
 | Field-type keywords | Where they apply |
