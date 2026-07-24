@@ -9,6 +9,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 `contract-core` is **pre-1.0**. Under 0.x semantics a **minor** bump may carry breaking
 changes to the public API or the authored format. Read the entry before moving a pin.
 
+## [Unreleased]
+
+## [0.5.0] — 2026-07-23
+
+### Added
+
+- **`contract-gate` reusable CI workflow** (`.github/workflows/contract-gate.yml`, `on:
+  workflow_call`) — a consuming repo calls it to install its project, run `contract lint` +
+  `contract reconcile`, and fail CI on any gating finding, turning the reconcile gate into a real
+  merge block. Pin it at the **same tag** as your contract-core dependency. See
+  [`docs/consuming-repo-setup.md`](docs/consuming-repo-setup.md) §7. One-time enablement required:
+  private-repo reusable-workflow "Actions access" sharing on this repo. **`v0.5.0` is the first
+  release that ships the gate** — this is the same-tag floor §7 refers to: pin the workflow `uses:`
+  and your contract-core dependency at `v0.5.0` or later, both at the identical tag. The consumer
+  pin must use the `.git@<tag>` URL form so the workflow's scoped token rewrite resolves (§1).
+- **`authoring-data-contracts` skill** (`skills/authoring-data-contracts/`) — the §5.5 authoring
+  skill (design R7). A companion process skill that extends the superpowers spec→plan flow: the spec
+  emits a `contract.yaml` + schemas, the plan lists the boundary decorators, and every `raw` boundary
+  gets its `@pytest.mark.raw_drift` companion test. Ships copy-edit templates (schemas, contracts,
+  runtime wiring with the kill switch + absent-library fallback, drift test, CI gate) and a worked
+  example proven green through `contract lint` + `contract reconcile`. See
+  [`docs/authoring-skill-and-spec-plan-flow.md`](docs/authoring-skill-and-spec-plan-flow.md). Not part
+  of the installable `contract-core` package; distributed via the Avenue Z marketplace.
+
 ## [0.4.0] — 2026-07-23
 
 ### Added

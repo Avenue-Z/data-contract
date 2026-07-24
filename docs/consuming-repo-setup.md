@@ -7,12 +7,20 @@ Add this to the consuming repo's `pyproject.toml`:
 
 ```toml
 dependencies = [
-  "contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.3.0",
+  "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@vX.Y.Z",
 ]
 ```
 
+Substitute `vX.Y.Z` with a concrete released tag ([`CHANGELOG.md`](../CHANGELOG.md) is the canonical
+list). If you also wire the gate (§7), this pin and the workflow `@tag` **must be the same tag**, at
+or above the release that introduced the gate — see the same-tag rule in §7.
+
 Your lockfile captures the exact resolved commit — the same pin-by-tag / lock-the-exact-version
 discipline we apply to contracts themselves.
+
+**Keep the `.git` suffix.** The `reconcile` gate (§6–§7) scopes its read token to exactly this repo
+by rewriting the `.git` clone URL; a bare `.../data-contract@<tag>` pin would clone unauthenticated
+and fail. It is the canonical `pip` VCS form regardless, so use it everywhere.
 
 **Prerequisite, not a footnote:** `data-contract` is private, so your CI needs read access to it —
 a deploy key or a token with `contents: read` on `Avenue-Z/data-contract`. This is the one
@@ -176,7 +184,7 @@ cut. After cutting a tag, once, from a machine holding only the CI credential:
 
 ```bash
 python -m venv /tmp/smoke && /tmp/smoke/bin/pip install \
-  "contract-core @ git+https://github.com/Avenue-Z/data-contract@v0.1.0"
+  "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@vX.Y.Z"
 /tmp/smoke/bin/python -c "from contract_core import load_runtime; print('ok')"
 ```
 
@@ -205,6 +213,93 @@ markers = [
 This is *your* pytest configuration, not something the library ships — `contract-core`'s own suite
 side-steps it by naming its reconcile fixtures `drift_*.py` (never collected), which a consuming
 repo running real drift tests cannot do.
+
+## 7. Wiring the gate into CI
+
+`contract lint` + `contract reconcile` only protect you if CI runs them on every PR. This repo ships
+a reusable workflow that does exactly that.
+
+**Prerequisite, not a footnote:** `data-contract` is private, so a reusable workflow it hosts is
+invisible to your repo until an admin enables, once, **Settings → Actions → General → Access →
+"Accessible from repositories in the 'Avenue-Z' organization"** on `data-contract`. A `workflow was not
+found` error means *that setting is off* — it is **not** the `contract-core-token`, which only clones
+the dependency. If the setting cannot be enabled, use the inline alternative below; it calls nothing
+cross-repo.
+
+**Pin the same tag you pin contract-core to.** The workflow ships the CLI flag names at its tag,
+while your `pyproject.toml` (§1) pins the CLI it drives, and a 0.x minor may change that surface (read
+[`CHANGELOG.md`](../CHANGELOG.md)). So the workflow `@tag` and your contract-core pin **must be the
+same tag** — a mismatch is silent CLI breakage, not a warning — and at or above the release that
+introduced the gate.
+
+### Call the reusable workflow
+
+```yaml
+# .github/workflows/contract.yml in YOUR repo
+name: contract
+on:
+  pull_request:
+  push:
+    branches: [main]   # your protected branches
+
+jobs:
+  gate:
+    # Same tag as your contract-core pin (§1) — see the same-tag rule below.
+    uses: Avenue-Z/data-contract/.github/workflows/contract-gate.yml@vX.Y.Z
+    with:
+      contract: contract.yaml
+      package: my_pkg              # importable — reconcile imports it to find registered boundaries
+      schemas: |                   # one dir per line
+        schemas
+      tests: |                     # one path per line
+        tests
+    secrets:
+      # A token/deploy key with contents:read on Avenue-Z/data-contract (§1).
+      contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
+```
+
+`schemas` and `tests` are **newline-delimited** — one path per line under a `|` block. Blank and
+whitespace-only lines *between or after* real entries are ignored, so a stray newline will not fail
+the gate. But `schemas` and `tests` are each **required**: a block with *no* real entry expands to
+zero flags and the gate fails closed with `Missing option '--schemas'` (or `--tests`). Every path
+you list must exist in the checkout — a non-existent or misspelled path fails the same way.
+
+### Exit-code semantics
+
+The gate **is** the exit code; nothing parses output. `lint` exits non-zero on a malformed contract,
+malformed schema, or unresolved schema ref. `reconcile` exits non-zero on any gating finding
+(categories P/A/B/C/D — see the reconcile design) and on a malformed contract. Any non-zero fails the
+check. The `raw_drift` marker is read by AST and needs no registration on reconcile's side — but if
+you run your drift tests as collected pytest tests under `--strict-markers`, register the marker as
+§6 shows, or pytest rejects it at collection.
+
+### Inline alternative (no cross-repo call)
+
+If you would rather not depend on the reusable workflow — or cannot enable the Actions-access setting
+above — run the two commands directly. Pin the marketplace actions to your repo's policy.
+
+```yaml
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install and run the gate
+        env:
+          CONTRACT_CORE_TOKEN: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::CONTRACT_CORE_READ_TOKEN is empty"; exit 1; }
+          git config --global \
+            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
+            "https://github.com/Avenue-Z/data-contract.git"
+          pip install .
+          contract lint --contract contract.yaml --schemas schemas
+          contract reconcile --contract contract.yaml --package my_pkg --tests tests
+```
 
 ---
 

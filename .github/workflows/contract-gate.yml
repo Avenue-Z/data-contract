@@ -1,0 +1,138 @@
+name: contract-gate
+
+# Reusable gate: a consuming repo calls this to run `contract lint` + `contract reconcile` against
+# ITS OWN contract and package, failing CI on any gating finding. It is `on: workflow_call` ONLY — it
+# never runs on this repo's own PRs, adds no check context here, and cannot touch the required `ci`
+# aggregate. Design: docs/superpowers/specs/2026-07-23-contract-gate-ci-wiring-design.md
+on:
+  workflow_call:
+    inputs:
+      contract:
+        description: "Path to the contract file (shared by lint + reconcile)."
+        required: true
+        type: string
+      package:
+        description: "Importable package name for `reconcile --package`."
+        required: true
+        type: string
+      schemas:
+        description: "Schema dirs for `lint --schemas`, one per line (newline-delimited)."
+        required: true
+        type: string
+      tests:
+        description: "Test paths for `reconcile --tests`, one per line (newline-delimited)."
+        required: true
+        type: string
+      python-version:
+        description: "Python to run the gate under."
+        required: false
+        default: "3.13"
+        type: string
+      install-command:
+        description: "Command that installs the consumer project + its pinned contract-core."
+        required: false
+        default: "pip install ."
+        type: string
+    secrets:
+      contract-core-token:
+        description: "Token with contents:read on Avenue-Z/data-contract, for pip's private clone."
+        required: true
+
+# Least privilege: this job reads code and reports a result; it never writes to the repo.
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      # 0. Fail fast with a readable message on an empty token — BEFORE any step consumes it.
+      #    The private checkout (step 2) and pip's clone (step 5) both need this secret; an empty
+      #    one (the fork-PR case) would otherwise die inside checkout with an opaque
+      #    "could not read from remote repository" and bury the real cause.
+      - name: Require the contract-core token
+        env:
+          CONTRACT_CORE_TOKEN: ${{ secrets.contract-core-token }}
+        run: |
+          set -euo pipefail
+          [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::contract-core-token is empty"; exit 1; }
+
+      # 1. The CALLER's repo — the contract + package the gate runs against.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # 2. This repo's scripts. A workflow_call workflow checks out the CALLER, so
+      #    scripts/expand-flags.sh is not otherwise on the runner. Check out data-contract at THIS
+      #    workflow's own resolved tag so the *tested* expander runs — never a drift-prone inline copy.
+      - name: Resolve this workflow's own ref
+        id: ref
+        run: |
+          set -euo pipefail
+          # GITHUB_WORKFLOW_REF looks like:
+          #   owner/repo/.github/workflows/contract-gate.yml@refs/tags/v0.5.0
+          echo "ref=${GITHUB_WORKFLOW_REF##*@}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Avenue-Z/data-contract
+          ref: ${{ steps.ref.outputs.ref }}
+          token: ${{ secrets.contract-core-token }}
+          path: .contract-core
+          persist-credentials: false
+
+      # 3. Python.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      # 4. Authenticate pip's clone of the private contract-core dependency — and NOTHING else.
+      #    The `.git` suffix scopes the rewrite to THIS repo: git's insteadOf is longest-PREFIX,
+      #    so a bare match on `.../data-contract` also credentials sibling clones like
+      #    `.../data-contract-secrets`. Matching `.../data-contract.git` ends at the repo boundary
+      #    — which is why the consumer pin MUST be the `.git@<ref>` form (see consuming-repo-setup §1).
+      - name: Configure git auth for the private dependency
+        env:
+          CONTRACT_CORE_TOKEN: ${{ secrets.contract-core-token }}
+        run: |
+          set -euo pipefail
+          git config --global \
+            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
+            "https://github.com/Avenue-Z/data-contract.git"
+
+      # 5. Install the consumer project (brings in the pyproject-pinned contract-core and the
+      #    `contract` console script). `install-command` is consumer-controlled shell.
+      - name: Install the consumer project
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: |
+          set -euo pipefail
+          eval "${INSTALL_COMMAND}"
+
+      # 6. Lint. Expand newline-delimited schema dirs into repeated --schemas flags via the TESTED
+      #    script (Task 1), consumed NUL-safe with mapfile -d ''.
+      - name: contract lint
+        env:
+          CONTRACT: ${{ inputs.contract }}
+          SCHEMAS: ${{ inputs.schemas }}
+        run: |
+          set -euo pipefail
+          # Redirect to a file, NOT `mapfile < <(...)`: process substitution hides the expander's
+          # exit code (set -e/pipefail don't reach into <(...)), so a crash would leave the gate
+          # marching on with truncated flags. A plain redirect makes its failure fail this step.
+          flags="$(mktemp)"
+          .contract-core/scripts/expand-flags.sh --schemas <<< "${SCHEMAS}" > "${flags}"
+          mapfile -d '' schema_flags < "${flags}"
+          contract lint --contract "${CONTRACT}" "${schema_flags[@]}"
+
+      # 7. Reconcile. The gate IS the exit code — non-zero on any gating finding (P/A/B/C/D).
+      - name: contract reconcile
+        env:
+          CONTRACT: ${{ inputs.contract }}
+          PACKAGE: ${{ inputs.package }}
+          TESTS: ${{ inputs.tests }}
+        run: |
+          set -euo pipefail
+          # Redirect to a file, NOT `mapfile < <(...)` — see the lint step: process substitution
+          # would swallow a non-zero exit from the expander and let the gate pass on truncated flags.
+          flags="$(mktemp)"
+          .contract-core/scripts/expand-flags.sh --tests <<< "${TESTS}" > "${flags}"
+          mapfile -d '' test_flags < "${flags}"
+          contract reconcile --contract "${CONTRACT}" --package "${PACKAGE}" "${test_flags[@]}"
