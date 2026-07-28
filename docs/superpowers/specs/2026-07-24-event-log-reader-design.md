@@ -1,7 +1,7 @@
 # Event-log reader (`contract events`) — Design
 
 **Date:** 2026-07-24
-**Status:** Draft — under review
+**Status:** Approved for build (TDD) — after three review rounds (2026-07-28)
 **Owner:** Paul Ramirez / Engineering
 **Implements:** system design §4.4 (validation event log), §5.4 (CLI); closes the §15 item-5
 residual "the event log still has no reader."
@@ -88,9 +88,12 @@ and an `input` both named `x`) **and** points both at the same `schema@version` 
 single group. Distinct schemas (the normal case — a raw per-call-site shape differs from the
 normalized input) already split via the key. This residual is documented, not silently merged.
 
-**`unobserved` matches by boundary `name`, not by full ref.** A declared boundary is `unobserved`
-iff **no event record carries its `name`** (`--contract` required; without it, a declared-but-unfired
-boundary simply does not appear). Name, not `(name, schema, version)`, was chosen deliberately: the
+**`unobserved` matches by boundary `name`, scoped to the contract's system.** A declared boundary is
+`unobserved` iff **no event record with `system == contract.system` carries its `name`** (`--contract`
+required; without it, a declared-but-unfired boundary simply does not appear). The system scope is
+load-bearing because the log is multi-system while a contract is one system (`contract.py`): two
+systems can each declare a boundary named `report`, and a bare-name match would mark system A's
+`report` observed because system B's fired. Match on `(contract.system, name)`, not `name` alone. Name, not `(name, schema, version)`, was chosen deliberately: the
 contract declares refs major-pinned (`peec.prompts_export@1`) while events record the fully-resolved
 version, so a per-ref match would need pin resolution, and — in the rare mid-observe contract edit
 where `prompts` now declares `@2` but the log holds only `@1` events — it would make `prompts` appear
@@ -108,22 +111,29 @@ Human default, sorted worst-first (`blocked` → `unobserved` → `review` → `
 
 ```
 demo-consumer — 3 boundaries
-  [blocked]    prompts        peec.prompts_export@1   12 events  (9 pass, 0 warn, 3 violation)
+  [blocked]    prompts        peec.prompts_export@1.0.0   12 events  (9 pass, 0 warn, 3 violation)
                  last shape: cols=[prompt, sentiment, position] — 3 violations would hard-fail under enforce
-  [review]     report         aivx.report@1            8 events  (7 pass, 1 warn, 0 violation)
-  [clean]      prompts_raw    peec.prompts_raw@1      12 events
-  [unobserved] team_capacity  (declared, never observed)
+  [review]     report         aivx.report@1.0.0            8 events  (7 pass, 1 warn, 0 violation)
+  [clean]      prompts_raw    peec.prompts_raw@1.0.0      12 events
+  [unobserved] team_capacity  sentiment.capacity@1  (declared, never observed)
 
 Not ready: 1 blocked, 1 unobserved. 1 clean, 1 needs review.
 ```
 
-Each row is one observed `(boundary, schema@version)` group (§3), sorted worst-first. **The header
-count is observed groups only** — `demo-consumer — 3 boundaries` counts the three observed rows;
-`unobserved` boundaries are listed separately below them and are not in that N (they were, by
-definition, never observed). "Last observed shape" is the shape from the **last matching line in file
-order** — the JSONL is append-only, so file order is arrival order; record timestamps normally agree
-but file order is the definition, so no sort-by-timestamp is implied. When `read_records` skips an
-un-parseable line, a trailing note appears: `(1 malformed line skipped)`.
+Each row is one observed `(boundary, schema@version)` group (§3), sorted worst-first. **Observed rows
+render the full resolved version** (`peec.prompts_export@1.0.0`), not the contract's `@major` pin —
+this is what the record carries (`emit()` writes `resolved.version`, `runtime.py:163`) and, crucially,
+it is what makes a mid-observe drift *visible*: two rows that drifted `1.0.0 → 1.2.0` render as two
+distinct refs, not two identical `@1` lines. Rendering `@major` here would silently re-collapse
+exactly what the per-ref grouping key (§3) split apart. **`unobserved` rows render the contract's
+declared (pinned) ref** (`sentiment.capacity@1`) — there is no resolved version because nothing fired.
+So an observed row shows a full version and an unobserved row shows a pin *by design*; they are
+different facts (what ran vs what was declared), not an inconsistency. **The header count is observed
+groups only** — `demo-consumer — 3 boundaries` counts the three observed rows; `unobserved` boundaries
+are listed separately and are not in that N. "Last observed shape" is the shape from the **last
+matching line in file order** — the JSONL is append-only, so file order is arrival order; record
+timestamps normally agree but file order is the definition, so no sort-by-timestamp is implied. When
+`read_records` skips an un-parseable line, a trailing note appears: `(1 malformed line skipped)`.
 
 **One global summary, in both outputs.** The summary aggregates across *all* systems in the log: in
 the human output it is the single trailing line after every system block; in `--json` it is the one
@@ -133,7 +143,8 @@ top-level `summary` object. (A single-system log — the common case — makes t
 {"systems": [{"system": "demo-consumer",
               "boundaries": [{"boundary": "prompts", "schema": "peec.prompts_export", "version": "1.0.0",
                               "events": 12, "pass": 9, "warn": 0, "violation": 3,
-                              "last_shape": {"columns": ["prompt", "sentiment", "position"], "dtypes": {}},
+                              "last_shape": {"columns": ["prompt", "sentiment", "position"],
+                                             "dtypes": {"prompt": "object", "sentiment": "float64", "position": "Int64"}},
                               "verdict": "blocked"}],
               "unobserved": [{"boundary": "team_capacity", "schema": "sentiment.capacity", "version": "1"}]}],
  "summary": {"clean": 1, "review": 1, "blocked": 1, "unobserved": 1, "skipped": 0, "ready": false}}
@@ -188,10 +199,15 @@ is tolerated by `read_records`, not an error.
   line** (`n_skipped == 1`); a **blank-line-only file → `([], 0)`** (blanks not counted); a missing
   path → `([], 0)`; a directory path → `OSError`. `summarize` over in-memory records (pure): every
   verdict (`clean`/`review`/`blocked`), the `warn`-vs-`violation` mapping pinned against the
-  `runtime.py` invariant (§3), the `unobserved`-by-name path (with a `Contract`, including the
-  stale-ref case that stays observed), the drift-into-two-rows case, multi-system logs with **one
-  global summary**, `ready` true only when `blocked == 0 and unobserved == 0`, and `skipped` reaching
-  `summary`.
+  `runtime.py` invariant (§3), the `unobserved` path scoped to `(contract.system, name)` — with a
+  `Contract`, including the stale-ref case that stays observed **and** a two-system log where the same
+  boundary name fired only under the *other* system (the contract's system must still flag it
+  `unobserved`), the drift-into-two-rows case, multi-system logs with **one global summary**, `ready`
+  true only when `blocked == 0 and unobserved == 0`, and `skipped` reaching `summary`.
+- Render tests — a drift log (one boundary at `1.0.0` and `1.2.0`) asserts the two human rows carry
+  **distinct** full-version refs (`@1.0.0` vs `@1.2.0`), so the `@major`-collapse render bug cannot
+  come back; and that observed rows render the resolved version while an `unobserved` row renders the
+  contract's pin.
 - `tests/test_cli.py` — the `events` command end to end: flag wiring, `--json` shape (including
   `summary.skipped`), the missing-log hint (exit 0), the unreadable-`--log` `OSError` (exit non-zero),
   and a malformed `--contract` (exit non-zero).
