@@ -26,18 +26,24 @@ A new CLI command `contract events`, wrapping two functions in
 function philosophy used for reconcile/compat):
 
 - `read_records(path) -> tuple[list[dict], int]` — the **tolerant reader**. Reads the JSONL and
-  returns `(records, n_skipped)`, skipping any blank or un-parseable line (the truncated final line)
-  and counting it. This is the *only* function that sees raw lines, so it is where the truncated-line
-  case is tested. It is not pure (it does file I/O) but is deterministic and unit-tested against
-  temp files, exactly as the reconcile suite tests its scanners.
+  returns `(records, n_skipped)`. A **blank / whitespace-only line is skipped and NOT counted** (it is
+  benign, exactly as `records()` treats it at `events.py:30`); only an **un-parseable** line (the
+  truncated final line — non-blank, fails `json.loads`) is skipped **and** increments `n_skipped`. A
+  benign log therefore reports `n_skipped == 0`. Missing-vs-unreadable is split on **`path.exists()`**
+  (see §5): a non-existent path returns `([], 0)`; a path that exists is read, so a directory or a
+  permission-denied file lets `OSError` propagate. This is the *only* function that sees raw lines, so
+  it is where the truncated-line case is tested. It is not pure (it does file I/O) but is
+  deterministic and unit-tested against temp files, exactly as the reconcile suite tests its scanners.
 - `summarize(records, *, contract=None, skipped=0) -> Report` — the **pure** core: parsed records in,
   a `Report` out, no I/O. `skipped` is threaded in so it reaches the `Report.summary` (and therefore
   both the human and `--json` output — see §4). Testable with in-memory dicts, no disk.
 
-`cli.py` owns the orchestration: resolve the log path, call `read_records`, optionally load the
-contract, call `summarize`, render. The public Python API stays **frozen** (R9's six names); this is
-CLI-only — `read_records`, `summarize`, and `EventLog.records()` are all private. Run it through the
-`contract` console script.
+`cli.py` owns the orchestration: **resolve the log path by constructing `EventLog(--log).path`**, so
+the `$CONTRACT_EVENT_LOG → ./contract-events.jsonl` fallback (`events.py:12-14`) is reused *by
+construction* rather than reimplemented and left to drift; then call `read_records`, optionally load
+the contract, call `summarize`, render. The public Python API stays **frozen** (R9's six names); this
+is CLI-only — `read_records`, `summarize`, and `EventLog.records()` are all private. Run it through
+the `contract` console script.
 
 ### Inputs
 
@@ -82,8 +88,18 @@ and an `input` both named `x`) **and** points both at the same `schema@version` 
 single group. Distinct schemas (the normal case — a raw per-call-site shape differs from the
 normalized input) already split via the key. This residual is documented, not silently merged.
 
-`unobserved` requires `--contract`; without it, a declared-but-unfired boundary simply does not
-appear. Observed-but-undeclared boundaries are **not** this tool's job — `reconcile` owns that diff.
+**`unobserved` matches by boundary `name`, not by full ref.** A declared boundary is `unobserved`
+iff **no event record carries its `name`** (`--contract` required; without it, a declared-but-unfired
+boundary simply does not appear). Name, not `(name, schema, version)`, was chosen deliberately: the
+contract declares refs major-pinned (`peec.prompts_export@1`) while events record the fully-resolved
+version, so a per-ref match would need pin resolution, and — in the rare mid-observe contract edit
+where `prompts` now declares `@2` but the log holds only `@1` events — it would make `prompts` appear
+**twice** (an observed `@1` row *and* an `unobserved` `@2` row). Name-matching keeps one boundary to
+one identity: `prompts` counts as observed, and the ref mismatch is still visible to a reader in the
+observed row's ref versus the contract. The cost, stated plainly: a boundary exercised only under a
+*stale* ref is not flagged `unobserved` for its current ref. Accepted; the common case (no mid-observe
+edit) is unaffected. Observed-but-undeclared boundaries are **not** this tool's job — `reconcile`
+owns that diff.
 
 ## 4. Output
 
@@ -101,19 +117,38 @@ demo-consumer — 3 boundaries
 Not ready: 1 blocked, 1 unobserved. 1 clean, 1 needs review.
 ```
 
-Each row is one observed `(boundary, schema@version)` group (§3), sorted worst-first. "Last observed
-shape" is the shape from the **last matching line in file order** — the JSONL is append-only, so file
-order is arrival order; record timestamps normally agree but file order is the definition, so no
-sort-by-timestamp is implied. When `read_records` skips a truncated/blank line, a trailing note
-appears: `(1 malformed line skipped)`.
+Each row is one observed `(boundary, schema@version)` group (§3), sorted worst-first. **The header
+count is observed groups only** — `demo-consumer — 3 boundaries` counts the three observed rows;
+`unobserved` boundaries are listed separately below them and are not in that N (they were, by
+definition, never observed). "Last observed shape" is the shape from the **last matching line in file
+order** — the JSONL is append-only, so file order is arrival order; record timestamps normally agree
+but file order is the definition, so no sort-by-timestamp is implied. When `read_records` skips an
+un-parseable line, a trailing note appears: `(1 malformed line skipped)`.
 
-`--json` emits the same content as a structured object:
-`{systems: [{system, boundaries: [{boundary, schema, version, events, pass, warn, violation,
-last_shape, verdict}], unobserved: [{boundary, schema, version}]}], summary: {clean, review, blocked,
-unobserved, skipped, ready: bool}}`. `skipped` is in the summary so the machine consumer — the whole
-audience `--json` exists for — can tell that N records were discarded; omitting it would be silent
-data loss for the reader whose entire job is confidence. A log spanning multiple systems yields one
-entry per system under `systems`.
+**One global summary, in both outputs.** The summary aggregates across *all* systems in the log: in
+the human output it is the single trailing line after every system block; in `--json` it is the one
+top-level `summary` object. (A single-system log — the common case — makes them look identical.)
+
+```json
+{"systems": [{"system": "demo-consumer",
+              "boundaries": [{"boundary": "prompts", "schema": "peec.prompts_export", "version": "1.0.0",
+                              "events": 12, "pass": 9, "warn": 0, "violation": 3,
+                              "last_shape": {"columns": ["prompt", "sentiment", "position"], "dtypes": {}},
+                              "verdict": "blocked"}],
+              "unobserved": [{"boundary": "team_capacity", "schema": "sentiment.capacity", "version": "1"}]}],
+ "summary": {"clean": 1, "review": 1, "blocked": 1, "unobserved": 1, "skipped": 0, "ready": false}}
+```
+
+`skipped` is in the summary so the machine consumer — the whole audience `--json` exists for — can
+tell that N records were discarded; omitting it would be silent data loss for the reader whose entire
+job is confidence.
+
+**`ready` is the machine gate, defined explicitly:** `ready == (blocked == 0 and unobserved == 0)` —
+`clean` and `review` are both ready (a `warn` does not block, §3). An agent keys its promote /
+don't-promote decision on this one field. Caveat, stated because it is load-bearing: without
+`--contract`, `unobserved` is `0` by construction, so `ready` reflects only *observed* boundaries and
+cannot account for a declared boundary that never fired — pass `--contract` for a `ready` that covers
+the whole contract.
 
 ### Exit code
 
@@ -131,15 +166,17 @@ is tolerated by `read_records`, not an error.
 
 ## 5. Edge cases
 
-- **Empty or missing log** → `read_records` returns `([], 0)` for a non-existent path (mirroring
-  `records()`'s `is_file()` guard); `cli.py` renders "no events recorded" + a hint (observe hasn't
-  run, or `--log` is wrong) whenever the record list is empty; exit 0.
-- **Present-but-unreadable log** (a directory, or permission-denied) → `read_records` does *not*
-  swallow this: the path exists, so it attempts the read and lets `OSError`
-  (`IsADirectoryError`/`PermissionError`) propagate; `cli.py` catches and reports it, exit non-zero
-  (§4). The missing-vs-unreadable split is `path.exists()`: absent → `([], 0)`, present → read.
-- **Malformed / truncated JSONL line** → `read_records` skips and counts it; the count reaches the
-  `Report.summary.skipped` and both outputs (§4).
+- **Missing log** → `read_records` returns `([], 0)` for a non-existent path. `cli.py` renders "no
+  events recorded" + a hint (observe hasn't run, or `--log` is wrong) whenever the record list is
+  empty; exit 0. The predicate is **`path.exists()`** — deliberately *not* `records()`'s `is_file()`,
+  because `is_file()` is `False` for a directory and would misroute a directory into this "missing"
+  arm instead of the unreadable one below.
+- **Present-but-unreadable log** (a directory, or permission-denied) → the path exists, so
+  `read_records` attempts the read and lets `OSError` (`IsADirectoryError` / `PermissionError`)
+  propagate; `cli.py` catches and reports it, exit non-zero (§4).
+- **Blank vs malformed line** → a blank / whitespace-only line is skipped and **not** counted (benign,
+  `n_skipped == 0`); only a non-blank un-parseable line (the truncated final line) increments
+  `n_skipped`, which reaches `Report.summary.skipped` and both outputs (§4).
 - **Observed shape rendering** → tabular `{columns, dtypes}` shows `cols=[...]`; payload `{keys}`
   shows `keys=[...]`. `--json` passes `observed_shape` through unchanged as `last_shape`.
 - **schema@version drift within a log** (the contract was edited mid-observe) → **two rows**, one per
@@ -147,11 +184,14 @@ is tolerated by `read_records`, not an error.
 
 ## 6. Testing (TDD)
 
-- `tests/test_events_report.py` — `read_records` over temp files: a clean log, a **truncated final
-  line** (skipped, `n_skipped == 1`), a blank-line-only file, a missing file. `summarize` over
-  in-memory records (pure): every verdict (`clean`/`review`/`blocked`), the `warn`-vs-`violation`
-  mapping pinned against the `runtime.py` invariant (§3), the `unobserved` path (with a `Contract`),
-  the drift-into-two-rows case, multi-system logs, and `skipped` reaching `summary`.
+- `tests/test_events_report.py` — `read_records` over temp files: a clean log; a **truncated final
+  line** (`n_skipped == 1`); a **blank-line-only file → `([], 0)`** (blanks not counted); a missing
+  path → `([], 0)`; a directory path → `OSError`. `summarize` over in-memory records (pure): every
+  verdict (`clean`/`review`/`blocked`), the `warn`-vs-`violation` mapping pinned against the
+  `runtime.py` invariant (§3), the `unobserved`-by-name path (with a `Contract`, including the
+  stale-ref case that stays observed), the drift-into-two-rows case, multi-system logs with **one
+  global summary**, `ready` true only when `blocked == 0 and unobserved == 0`, and `skipped` reaching
+  `summary`.
 - `tests/test_cli.py` — the `events` command end to end: flag wiring, `--json` shape (including
   `summary.skipped`), the missing-log hint (exit 0), the unreadable-`--log` `OSError` (exit non-zero),
   and a malformed `--contract` (exit non-zero).
