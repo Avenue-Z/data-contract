@@ -11,6 +11,17 @@ from contract_core.contract import Contract
 # Worst-first ordering for the human view and for picking a system's headline.
 _VERDICT_RANK = {"blocked": 0, "review": 1, "clean": 2}
 
+# The keys `summarize` reads. A "tolerant" reader must reject a parseable-but-wrong-shape line
+# (a scalar, an array, a foreign/old record missing a key) too — otherwise `summarize` blows up
+# with a KeyError/TypeError, and the reader is tolerant of exactly one failure mode it advertised.
+_REQUIRED_KEYS = frozenset({"system", "boundary", "schema", "version", "result", "observed_shape"})
+
+
+def _is_valid_record(obj: Any) -> bool:
+    return (isinstance(obj, dict)
+            and _REQUIRED_KEYS <= obj.keys()
+            and isinstance(obj.get("observed_shape"), dict))
+
 
 def read_records(path: str | Path) -> tuple[list[dict[str, Any]], int]:
     """Return (records, n_skipped) from a JSONL event log, tolerantly.
@@ -18,8 +29,9 @@ def read_records(path: str | Path) -> tuple[list[dict[str, Any]], int]:
     Split on `path.exists()`, NOT `is_file()`: a non-existent path is empty (`([], 0)`), but a path
     that exists is read — so a directory or permission-denied file lets `OSError` propagate to the
     caller rather than being silently treated as "missing" (design §5). A blank/whitespace-only line
-    is skipped and NOT counted (benign); only a non-blank un-parseable line (the truncated final
-    line a crashed-mid-write log carries) increments `n_skipped`.
+    is skipped and NOT counted (benign); a line that fails `json.loads` OR parses to something that
+    is not a well-formed event record (`_is_valid_record`) is skipped **and** counted, so a foreign
+    or truncated record can never reach `summarize` and crash it.
     """
     p = Path(path)
     if not p.exists():
@@ -30,9 +42,14 @@ def read_records(path: str | Path) -> tuple[list[dict[str, Any]], int]:
         if not line.strip():
             continue
         try:
-            records.append(json.loads(line))
+            obj = json.loads(line)
         except json.JSONDecodeError:
             skipped += 1
+            continue
+        if not _is_valid_record(obj):
+            skipped += 1
+            continue
+        records.append(obj)
     return records, skipped
 
 
@@ -46,6 +63,7 @@ class BoundarySummary:
     n_pass: int
     n_warn: int
     n_violation: int
+    n_other: int  # records whose `result` is none of pass/warn/violation — fail closed
     last_shape: dict[str, Any]
     verdict: str  # "clean" | "review" | "blocked"
 
@@ -73,23 +91,29 @@ class Report:
     def summary(self) -> dict[str, Any]:
         counts = {"clean": 0, "review": 0, "blocked": 0}
         unobserved = 0
+        observed = 0
         for sr in self.systems:
             for b in sr.boundaries:
                 counts[b.verdict] += 1
+                observed += 1
             unobserved += len(sr.unobserved)
         return {
             **counts,
             "unobserved": unobserved,
             "skipped": self.skipped,
-            # A violation would hard-fail under enforce; an unexercised boundary can't be judged.
-            "ready": counts["blocked"] == 0 and unobserved == 0,
+            # Fail closed: a violation would hard-fail under enforce; an unexercised boundary can't
+            # be judged; and NO observed boundary at all is zero evidence, not a green light — an
+            # empty/absent log must never read as ready (design §4; the agent gate keys on this).
+            "ready": counts["blocked"] == 0 and unobserved == 0 and observed > 0,
         }
 
 
-def _verdict(n_warn: int, n_violation: int) -> str:
+def _verdict(n_warn: int, n_violation: int, n_other: int) -> str:
     # Pinned to the runtime invariant (runtime.py:149-166): a `violation` is emitted for any hard
-    # diff regardless of mode and would hard-fail under enforce; a `warn` never hard-fails.
-    if n_violation:
+    # diff regardless of mode and would hard-fail under enforce; a `warn` never hard-fails. An
+    # `n_other` (a result value this reader does not recognise) is treated as blocked — fail closed,
+    # never let an unclassifiable record read as clean.
+    if n_violation or n_other:
         return "blocked"
     if n_warn:
         return "review"
@@ -117,11 +141,13 @@ def summarize(records: list[dict[str, Any]], *, contract: Contract | None = None
         n_pass = sum(1 for r in recs if r["result"] == "pass")
         n_warn = sum(1 for r in recs if r["result"] == "warn")
         n_violation = sum(1 for r in recs if r["result"] == "violation")
+        n_other = len(recs) - n_pass - n_warn - n_violation  # unrecognised result values
         by_system.setdefault(system, []).append(BoundarySummary(
             system=system, boundary=boundary, schema=schema, version=version,
             events=len(recs), n_pass=n_pass, n_warn=n_warn, n_violation=n_violation,
+            n_other=n_other,
             last_shape=recs[-1]["observed_shape"],  # last in file order (design §4)
-            verdict=_verdict(n_warn, n_violation),
+            verdict=_verdict(n_warn, n_violation, n_other),
         ))
 
     systems = set(by_system)
@@ -149,6 +175,12 @@ def summarize(records: list[dict[str, Any]], *, contract: Contract | None = None
     return Report(systems=reports, skipped=skipped)
 
 
+def _display_ref(schema: str, version: str) -> str:
+    """`(schema, version)` -> `schema@version`, or just `schema` when the ref carries no version —
+    so a refless declared boundary never renders a dangling `foo@` (design §6 nit)."""
+    return f"{schema}@{version}" if version else schema
+
+
 def to_dict(report: Report) -> dict[str, Any]:
     """The `--json` shape (design §4). JSON key is `pass`, not the Python-safe `n_pass`."""
     return {
@@ -158,7 +190,8 @@ def to_dict(report: Report) -> dict[str, Any]:
                 "boundaries": [
                     {"boundary": b.boundary, "schema": b.schema, "version": b.version,
                      "events": b.events, "pass": b.n_pass, "warn": b.n_warn,
-                     "violation": b.n_violation, "last_shape": b.last_shape, "verdict": b.verdict}
+                     "violation": b.n_violation, "other": b.n_other,
+                     "last_shape": b.last_shape, "verdict": b.verdict}
                     for b in sr.boundaries
                 ],
                 "unobserved": [
@@ -181,24 +214,31 @@ def _shape_str(shape: dict[str, Any]) -> str:
 
 
 def render_human(report: Report) -> str:
-    """The default human view: worst-first rows per system, one global summary line."""
+    """The default human view (design §4 mockup): worst-first rows per system, boundary before ref,
+    no counts on clean rows, one global summary line."""
     lines: list[str] = []
     for sr in report.systems:
         lines.append(f"{sr.system} — {len(sr.boundaries)} boundaries")
         for b in sr.boundaries:
-            ref = f"{b.schema}@{b.version}"  # FULL resolved version — never collapse to @major (§4)
-            counts = f"({b.n_pass} pass, {b.n_warn} warn, {b.n_violation} violation)"
-            lines.append(f"  [{b.verdict}] {ref}  {b.boundary}  {b.events} events  {counts}")
-            if b.verdict == "blocked":
+            ref = _display_ref(b.schema, b.version)  # FULL resolved version — never @major (§4)
+            row = f"  [{b.verdict}]  {b.boundary}  {ref}  {b.events} events"
+            if b.verdict != "clean":
+                extra = f", {b.n_other} unrecognized" if b.n_other else ""
+                row += f"  ({b.n_pass} pass, {b.n_warn} warn, {b.n_violation} violation{extra})"
+            lines.append(row)
+            if b.verdict == "blocked" and b.n_violation:
                 lines.append(f"      last shape: {_shape_str(b.last_shape)} — "
                              f"{b.n_violation} violation(s) would hard-fail under enforce")
+            elif b.verdict == "blocked":  # blocked purely by an unclassifiable result
+                lines.append(f"      {b.n_other} unrecognized result value(s) — "
+                             f"cannot classify, treated as not-ready")
         for u in sr.unobserved:
-            lines.append(f"  [unobserved] {u.schema}@{u.version}  {u.boundary}  "
+            lines.append(f"  [unobserved]  {u.boundary}  {_display_ref(u.schema, u.version)}  "
                          f"(declared, never observed)")
     s = report.summary
     if report.skipped:
         lines.append(f"({report.skipped} malformed line(s) skipped)")
     verdict = "Ready to enforce" if s["ready"] else "Not ready"
-    lines.append(f"{verdict}: {s['blocked']} blocked, {s['unobserved']} unobserved, "
-                 f"{s['review']} review, {s['clean']} clean.")
+    lines.append(f"{verdict}: {s['blocked']} blocked, {s['unobserved']} unobserved. "
+                 f"{s['clean']} clean, {s['review']} needs review.")
     return "\n".join(lines)

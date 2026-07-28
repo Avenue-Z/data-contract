@@ -182,3 +182,65 @@ def test_human_render_observed_full_version_unobserved_pin():
     assert "peec.prompts_export@1.0.0" in out       # observed → resolved version
     assert "sentiment.capacity@1" in out            # unobserved → declared pin
     assert "unobserved" in out
+
+
+# ---- round-four review: fail-closed on no/absent/malformed evidence ----
+
+def test_ready_false_when_no_boundaries_observed():
+    # #1 ship-blocker: an empty log must NOT read as ready — zero evidence != safe.
+    assert summarize([]).summary["ready"] is False
+
+
+def test_read_records_skips_non_dict_json_lines(tmp_path):
+    # #2: valid JSON that isn't an object (scalar/array) must be skipped, not crash summarize.
+    p = tmp_path / "e.jsonl"
+    p.write_text("123\n[1, 2]\n\"x\"\n")
+    records, skipped = read_records(p)
+    assert records == []
+    assert skipped == 3
+
+
+def test_read_records_skips_records_missing_required_keys(tmp_path):
+    import json
+    p = tmp_path / "e.jsonl"
+    p.write_text(json.dumps({"system": "s"}) + "\n")  # missing boundary/schema/version/result/shape
+    records, skipped = read_records(p)
+    assert (records, skipped) == ([], 1)
+
+
+def test_read_records_skips_record_with_non_dict_observed_shape(tmp_path):
+    import json
+    p = tmp_path / "e.jsonl"
+    p.write_text(json.dumps(rec(shape=None) | {"observed_shape": "oops"}) + "\n")
+    records, skipped = read_records(p)
+    assert (records, skipped) == ([], 1)
+
+
+def test_summarize_does_not_crash_and_flags_unknown_result():
+    # #3: a parseable record with an unrecognized result must NOT read as clean/ready.
+    r = rec(result="banana")
+    report = summarize([r])
+    b = report.systems[0].boundaries[0]
+    assert b.verdict != "clean"
+    assert report.summary["ready"] is False
+
+
+def test_human_clean_row_has_no_counts_and_boundary_before_ref():
+    # #4: match the approved §4 mockup — boundary before ref, no counts on clean rows.
+    out = render_human(summarize([rec(result="pass")]))
+    row = next(line for line in out.splitlines() if "[clean]" in line)
+    assert "pass" not in row  # clean rows carry no (n pass, ...) breakdown
+    assert row.index("prompts") < row.index("peec.prompts_export")
+
+
+def test_human_summary_line_matches_mockup():
+    out = render_human(summarize([rec(result="violation")]))
+    assert out.splitlines()[-1] == "Not ready: 1 blocked, 0 unobserved. 0 clean, 0 needs review."
+
+
+def test_unobserved_refless_schema_has_no_dangling_at():
+    # #6: a contract ref with no @major must not render "foo@".
+    c = Contract.model_validate({"system": "demo", "version": "1.0.0",
+                                 "inputs": [{"name": "x", "schema": "foo"}]})
+    out = render_human(summarize([], contract=c))
+    assert "foo@" not in out

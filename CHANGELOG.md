@@ -22,8 +22,10 @@ changes to the public API or the authored format. Read the entry before moving a
   non-blocking `warn` to reconcile), or `blocked` (a violation observed that **would hard-fail under
   `enforce`**). With `--contract`, a declared boundary that never fired is flagged `unobserved` (not
   safe to enforce — never exercised), scoped to the contract's system. `--json` emits the same
-  content for consuming agents, including a `summary.ready` gate (`blocked == 0 and unobserved == 0`)
-  and a `summary.skipped` count of any truncated/un-parseable log lines. Flags: `--log` (defaults to
+  content for consuming agents, including a `summary.ready` gate that **fails closed**
+  (`blocked == 0 and unobserved == 0 and observed > 0` — an empty or absent log reads `ready: false`,
+  never a green light on zero evidence) and a `summary.skipped` count of any truncated, foreign, or
+  un-parseable log lines. An unrecognised `result` value reads as `blocked`, not `clean`. Flags: `--log` (defaults to
   `$CONTRACT_EVENT_LOG`, else `./contract-events.jsonl`), `--contract`, `--json`. It is a **reporting
   tool, not a gate** — it exits 0 even when boundaries are `blocked`, non-zero only on a real error
   (an unreadable log path, a malformed contract).

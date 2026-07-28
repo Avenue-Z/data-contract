@@ -258,3 +258,19 @@ def test_events_contract_flags_unobserved(tmp_path):
     assert res.exit_code == 0, res.output
     assert "[unobserved]" in res.output
     assert "report" in res.output  # the declared-but-unfired output boundary
+
+
+def test_events_json_empty_log_is_not_ready(tmp_path):
+    # #1 ship-blocker guard: --json on an absent log must report ready False.
+    import json
+    res = CliRunner().invoke(main, ["events", "--log", str(tmp_path / "absent.jsonl"), "--json"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["summary"]["ready"] is False
+
+
+def test_events_contract_with_missing_log_still_hints(tmp_path):
+    # #5: --contract must not suppress the "check --log" signal when the log is absent/typo'd.
+    res = CliRunner().invoke(main, ["events", "--log", str(tmp_path / "typo.jsonl"),
+                                    "--contract", str(FIX / "consumer" / "contract.yaml")])
+    assert res.exit_code == 0, res.output
+    assert "check --log" in res.output.lower() or "no events" in res.output.lower()
