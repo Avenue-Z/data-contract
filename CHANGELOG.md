@@ -11,6 +11,15 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+### Fixed
+
+- **Silenced the `schema` field-shadow `UserWarning`** (§15 item 5). `Schema` and `BoundarySpec`
+  named a field `schema`, which shadowed the deprecated `BaseModel.schema` and emitted a
+  `UserWarning` on **every** import/CLI run — visible to every consumer. The attributes are now
+  `schema_name` / `schema_ref` (via a Pydantic `alias="schema"`), so the authored YAML key is
+  unchanged (`schema:` still) and the public API is unaffected (both models were already private),
+  but nothing warns anymore. Internal-only rename; no format or API change.
+
 ## [0.6.0] — 2026-07-28
 
 ### Added

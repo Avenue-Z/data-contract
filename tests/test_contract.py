@@ -9,7 +9,7 @@ FIX = Path(__file__).parent / "fixtures"
 def test_load_contract():
     c = Contract.from_yaml(FIX / "contract.yaml")
     assert c.system == "aivx-reports"
-    assert c.raw[0].schema == "peec.prompts_raw@1"
+    assert c.raw[0].schema_ref == "peec.prompts_raw@1"
     assert c.inputs[0].mode == "enforce"
     assert c.outputs[0].name == "report_payload"
 

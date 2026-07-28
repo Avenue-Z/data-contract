@@ -78,7 +78,7 @@ def to_odcs(contract: Contract, resolver: Resolver) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
     for group in (contract.raw, contract.inputs, contract.outputs):
         for b in group:
-            resolved = resolver.resolve(b.schema)
+            resolved = resolver.resolve(b.schema_ref)
             blocks.append(_schema_block(b.name, resolved))
     return {
         "apiVersion": "v3.1.0",
