@@ -190,4 +190,6 @@ RECONCILE FAILED:
   - raw boundary 'tiktok_raw' declared but no drift test found     # exit 1
 ```
 
-Then adopt on live data in `observe`, read the event log, and flip each boundary to `enforce`.
+Then adopt on live data in `observe`, review readiness with `contract events --contract contract.yaml`
+(promote a boundary once it reads `clean`, or `review` after reconciling the warn), and flip each
+boundary to `enforce`.

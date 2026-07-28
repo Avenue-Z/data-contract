@@ -5,8 +5,9 @@
 
 system: tiktok-brand-pulse      # NOT `name:`
 version: 1.0.0
-# mode starts at `observe` (validate + log, never fail) — the on-ramp. Confirm the shape on
-# live data by reading the event log, then promote each boundary to `enforce` (SKILL.md Phase C).
+# mode starts at `observe` (validate + log, never fail) — the on-ramp. Confirm the shape on live
+# data with `contract events --contract contract.yaml`, then promote each boundary that reads
+# `clean` to `enforce` (SKILL.md Phase C).
 raw:
   # The per-call-site raw payload — IS schema'd (a common mistake is to omit this schema).
   # Its shape is a function of the specific request, so it is NOT reused across systems.
