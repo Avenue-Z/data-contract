@@ -24,9 +24,32 @@ Green baseline, re-run:
 
 Ship-quality. The tabular `enforce` core (type-family matching, fail-closed readiness, the reconcile
 registration gate) is correct and unusually well documented at the "why" level. The findings cluster on
-the **payload path** and the **wrong-type-return path**, plus one export mismap and two DX papercuts.
-None require holding the release; F1 and F2 are worth a fast-follow because both let bad or breaking
-outcomes through silently.
+the **payload path**, the **wrong-type-return path**, and the **ODCS export path**, plus two DX
+papercuts. None require holding the release; F1 and F2 are worth a fast-follow because both let bad or
+breaking outcomes through silently.
+
+## Completeness (why this is not a moving target)
+
+Coverage was made measurable rather than asserted, so this review has a stopping criterion:
+
+- **Behavior matrix, exhaustive.** Every combination of `{tabular, payload}` x `{input, output}` x
+  `{observe, warn, enforce}` x `{valid, missing, retyped, nullable, value, extra}` was executed and its
+  `(event result, raised?)` checked against the documented semantics: **39/39 correct.** Hard drift logs
+  a violation in every mode and raises only under `enforce`; extra-on-output warns and never raises;
+  extra-on-input passes. The core decision logic is proven, not sampled.
+- **Branch coverage: 95%** (`pytest --cov --cov-branch`). Every uncovered line was read and classified.
+  The behavioral ones (tabular extra-column warn, payload retyped/extra, the family "reject a
+  stringified int" branch, ODCS export of a `json_schema` payload) are covered by the matrix above and
+  by F1 to F6. The rest are defensive error branches (`except SyntaxError: continue`, unreadable-file
+  rendering, a single-module package fallback, a legacy `EventLog.records()` the CLI does not call) with
+  no behavior to get wrong.
+- **Finding rate is decaying.** Pass 1 (read) produced a noisy list; pass 2 (adversarial) netted the two
+  Mediums and cut the noise; pass 3 (coverage + matrix) proved the core and added one Low (F6). No new
+  Medium-or-higher issue has appeared since pass 2.
+
+Residual risk this method cannot close, stated honestly: behavior gated on a real external trigger (true
+multi-process concurrency on one log; `reconcile` against a real consumer package) is reasoned about,
+not executed here, and future code is out of scope. Short of those, the surface is covered.
 
 ## What's strong
 
@@ -136,6 +159,21 @@ raw schema) but undocumented and surprising.
 *Follow-up:* note the asymmetry in the authoring skill, or have the passthrough path set
 `additionalProperties` from `open` when the raw schema does not pin it.
 
+### F6 — Low — a `json_schema` payload exports to ODCS with an empty schema block `reproduced`
+
+`odcs._schema_block` only walks `resolved.fields`. A payload authored with a raw `json_schema` has
+`fields is None`, so it exports as a named table with **no properties** — the whole shape is silently
+dropped from the ODCS document (and `lint`, which runs `to_odcs` + `validate_odcs`, still passes):
+
+```
+ODCS json_schema-payload props: []   (shape dropped from export)
+```
+
+Same root as F5: `json_schema` payloads are second-class on the export side too.
+
+*Follow-up:* translate the raw `json_schema` `properties` into ODCS `properties`, or, if that is out of
+scope, have `to_odcs` skip the boundary explicitly rather than emit a hollow block.
+
 ## Open questions (operability, not defects)
 
 The event log being a local per-process JSONL with no sink is already a documented deferral (design
@@ -159,6 +197,7 @@ because the sink hook is unbuilt). Not re-filed as a defect. The live questions 
 - [ ] F3 — map `datetime` to ODCS `timestamp`
 - [ ] F4 — sharpen the `SchemaNotFound` message / document supported pin forms
 - [ ] F5 — document (or close) the passthrough-payload extra-key asymmetry
+- [ ] F6 — export `json_schema` payload shape to ODCS, or skip the boundary instead of emitting an empty block
 - [ ] Answer the four open questions above
 
 ## What was considered and dropped
