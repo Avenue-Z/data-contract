@@ -269,3 +269,15 @@ def test_read_records_output_never_crashes_summarize_on_foreign_input(tmp_path):
     summarize(records, skipped=skipped)  # must not raise
     assert records == []
     assert skipped == 3
+
+
+def test_ready_and_report_scope_to_contract_system():
+    # cross-system: shared log, A clean and unrelated B has a violation. With --contract A,
+    # ready/counts and displayed systems must be A-only — B's violation must not bleed into A.
+    c = _contract(system="A", names_to_refs={"prompts": "peec.prompts_export@1"})
+    records = [rec(system="A", boundary="prompts", result="pass"),
+               rec(system="B", boundary="other", result="violation")]
+    report = summarize(records, contract=c)
+    assert [sr.system for sr in report.systems] == ["A"]   # focused on the contract's system
+    assert report.summary["blocked"] == 0                  # B's violation excluded
+    assert report.summary["ready"] is True                 # A is clean → ready

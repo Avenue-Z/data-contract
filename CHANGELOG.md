@@ -29,7 +29,10 @@ changes to the public API or the authored format. Read the entry before moving a
   `ready` and `skipped` are **separate facts by design**: `ready` reports whether the records that
   were *successfully read* are clean; it does **not** fold in `skipped` (a benign truncated final
   line would otherwise flip a clean boundary to not-ready). An agent that needs evidence
-  *completeness*, not just cleanliness, must read `skipped` alongside `ready`. Flags: `--log` (defaults to
+  *completeness*, not just cleanliness, must read `skipped` alongside `ready`. **`--contract` scopes
+  the entire report** — displayed boundaries, counts, and `ready` — to the contract's one system, so
+  an unrelated system's violation in a shared log can't bleed into this contract's gate. With no
+  contract, every system in the log is reported (the multi-system overview). Flags: `--log` (defaults to
   `$CONTRACT_EVENT_LOG`, else `./contract-events.jsonl`), `--contract`, `--json`. It is a **reporting
   tool, not a gate** — it exits 0 even when boundaries are `blocked`, non-zero only on a real error
   (an unreadable log path, a malformed contract).

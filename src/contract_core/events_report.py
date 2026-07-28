@@ -161,9 +161,14 @@ def summarize(records: list[dict[str, Any]], *, contract: Contract | None = None
             verdict=_verdict(n_warn, n_violation, n_other),
         ))
 
-    systems = set(by_system)
+    # --contract declares "I am reasoning about ONE system." Scope the whole report to it —
+    # displayed boundaries, counts, AND `ready` — so an unrelated system's violation in a shared
+    # log can't bleed into this contract's gate (unobserved is already system-scoped; ready must
+    # match). With no contract, report every system in the log (the multi-system overview).
     if contract is not None:
-        systems.add(contract.system)
+        systems = {contract.system}
+    else:
+        systems = set(by_system)
 
     reports: list[SystemReport] = []
     for system in sorted(systems):

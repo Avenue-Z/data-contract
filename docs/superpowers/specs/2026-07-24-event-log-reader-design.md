@@ -160,9 +160,12 @@ log (`observed == 0`) reads `ready: false`, never a green light on zero evidence
 promote / don't-promote decision on this one field. Two caveats, stated because they are
 load-bearing:
 
-- Without `--contract`, `unobserved` is `0` by construction, so `ready` reflects only *observed*
-  boundaries and cannot account for a declared boundary that never fired — pass `--contract` for a
-  `ready` that covers the whole contract.
+- `--contract` **scopes the entire report to the contract's one system** — displayed boundaries,
+  counts, and `ready` — not just `unobserved`. So on a shared multi-system log, an unrelated system's
+  violation cannot bleed into this contract's `ready`. Without `--contract`, `unobserved` is `0` by
+  construction and every system in the log is reported (the multi-system overview), so `ready`
+  reflects only *observed* boundaries and cannot account for a declared boundary that never fired —
+  pass `--contract` for a `ready` that covers the whole contract's one system.
 - `ready` reports cleanliness of the records **successfully read**; it deliberately does **not** fold
   in `skipped`. A truncated final line (`skipped == 1`) is common and benign, and flipping an
   otherwise-clean boundary to not-ready over it would be noise that trains people to ignore the gate.
