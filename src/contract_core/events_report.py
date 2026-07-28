@@ -184,7 +184,7 @@ def summarize(records: list[dict[str, Any]], *, contract: Contract | None = None
             declared = [*contract.raw, *contract.inputs, *contract.outputs]
             for spec in declared:
                 if spec.name not in observed_names:
-                    name, ver = _split_ref(spec.schema)
+                    name, ver = _split_ref(spec.schema_ref)
                     unobserved.append(Unobserved(boundary=spec.name, schema=name, version=ver))
         reports.append(SystemReport(system=system, boundaries=boundaries, unobserved=unobserved))
 

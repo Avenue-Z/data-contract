@@ -55,8 +55,21 @@ comes first). It adds three obligations, one per stage:
   (it includes the lazy build, the `CONTRACT_DISABLED` kill switch, and the absent-library fallback).
 - Run `contract lint --contract contract.yaml --schemas schemas` and
   `contract reconcile --contract contract.yaml --package <pkg> --tests tests` — both green before done.
-- **Adopt in `observe` first** (validate, never fail, log the observed shape) → read the event log →
-  promote each boundary to `enforce`. This is the on-ramp; do not start at `enforce` on live data.
+- **Adopt in `observe` first** (validate, never fail, log the observed shape) → review readiness with
+  `contract events` → promote each boundary to `enforce`. This is the on-ramp; do not start at
+  `enforce` on live data.
+- **`contract events`** reads the observe event log and gives each boundary a verdict — this is how
+  you decide it's safe to promote (don't hand-parse the JSONL):
+  ```
+  contract events --contract contract.yaml            # human summary
+  contract events --contract contract.yaml --json     # machine-readable, carries a `ready` gate
+  ```
+  Verdicts: `clean` (no violations observed → safe to promote), `review` (a non-blocking `warn` to
+  reconcile first, then promote), `blocked` (a violation that **would hard-fail under `enforce`** →
+  do not promote). With `--contract` it also flags a declared boundary that never fired as
+  `unobserved` (never exercised → not safe yet). Promote a boundary only once it reads `clean`
+  (or `review` after you reconcile the warn); `--json`'s `ready` is `true` only when nothing is
+  blocked or unobserved.
 
 ## Quick reference — the exact shapes
 

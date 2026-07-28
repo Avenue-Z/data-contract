@@ -11,6 +11,24 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-28
+
+### Fixed
+
+- **Silenced the `schema` field-shadow `UserWarning`** (§15 item 5). `Schema` and `BoundarySpec`
+  named a field `schema`, which shadowed the deprecated `BaseModel.schema` and emitted a
+  `UserWarning` on **every** import/CLI run — visible to every consumer. The attributes are now
+  `schema_name` / `schema_ref` (via a Pydantic `alias="schema"`), so the authored YAML key is
+  unchanged (`schema:` still) and the public API is unaffected (both models were already private),
+  but nothing warns anymore. Internal-only rename; no format or API change.
+
+### Changed
+
+- **The `authoring-data-contracts` skill's observe→enforce on-ramp now points at `contract events`**
+  (0.6.0) instead of the unactionable "read the event log." Phase C, the worked example, and both
+  contract templates name the command and the promotion rule (promote a boundary once it reads
+  `clean`). Skill/docs only — no code.
+
 ## [0.6.0] — 2026-07-28
 
 ### Added

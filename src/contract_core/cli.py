@@ -78,9 +78,9 @@ def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     unresolved = []
     for b in boundaries:
         try:
-            resolver.resolve(b.schema)
+            resolver.resolve(b.schema_ref)
         except SchemaNotFound:
-            unresolved.append(b.schema)
+            unresolved.append(b.schema_ref)
     if unresolved:
         click.echo("LINT FAILED — unresolved schema refs:")
         for ref in unresolved:
