@@ -192,3 +192,69 @@ def test_reconcile_incident_2_replay_exits_one(make_reconcile_pkg, reconcile_sou
     assert res.exit_code == 1
     assert "RECONCILE FAILED" in res.output
     assert "prompts_raw" in res.output
+
+
+# ---- `contract events` (design 2026-07-24-event-log-reader-design.md) ----
+
+def _log(tmp_path, records):
+    import json
+    p = tmp_path / "events.jsonl"
+    p.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return p
+
+
+def _ev(system="demo-consumer", boundary="prompts", schema="peec.prompts_export",
+        version="1.0.0", result="pass"):
+    return {"system": system, "boundary": boundary, "schema": schema, "version": version,
+            "result": result,
+            "observed_shape": {"columns": ["prompt"], "dtypes": {"prompt": "object"}},
+            "timestamp": "2026-07-28T00:00:00Z"}
+
+
+def test_events_human_output(tmp_path):
+    log = _log(tmp_path, [_ev(result="pass"), _ev(result="violation")])
+    res = CliRunner().invoke(main, ["events", "--log", str(log)])
+    assert res.exit_code == 0, res.output
+    assert "[blocked]" in res.output
+    assert "peec.prompts_export@1.0.0" in res.output
+
+
+def test_events_json_has_ready_and_skipped(tmp_path):
+    import json
+    log = _log(tmp_path, [_ev(result="pass")])
+    res = CliRunner().invoke(main, ["events", "--log", str(log), "--json"])
+    assert res.exit_code == 0, res.output
+    doc = json.loads(res.output)
+    assert doc["summary"]["ready"] is True
+    assert doc["summary"]["skipped"] == 0
+    assert doc["systems"][0]["boundaries"][0]["verdict"] == "clean"
+
+
+def test_events_missing_log_is_not_an_error(tmp_path):
+    res = CliRunner().invoke(main, ["events", "--log", str(tmp_path / "nope.jsonl")])
+    assert res.exit_code == 0, res.output
+    assert "no events recorded" in res.output.lower()
+
+
+def test_events_unreadable_log_directory_fails(tmp_path):
+    d = tmp_path / "adir"
+    d.mkdir()
+    res = CliRunner().invoke(main, ["events", "--log", str(d)])
+    assert res.exit_code == 1
+
+
+def test_events_malformed_contract_fails(tmp_path):
+    log = _log(tmp_path, [_ev()])
+    res = CliRunner().invoke(main, ["events", "--log", str(log),
+                                    "--contract", str(FIX / "contract_malformed.yaml")])
+    assert res.exit_code == 1
+
+
+def test_events_contract_flags_unobserved(tmp_path):
+    # consumer/contract.yaml declares raw prompts_raw, input prompts, output report.
+    log = _log(tmp_path, [_ev(boundary="prompts")])  # only 'prompts' fired
+    res = CliRunner().invoke(main, ["events", "--log", str(log),
+                                    "--contract", str(FIX / "consumer" / "contract.yaml")])
+    assert res.exit_code == 0, res.output
+    assert "[unobserved]" in res.output
+    assert "report" in res.output  # the declared-but-unfired output boundary

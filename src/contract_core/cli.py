@@ -115,3 +115,42 @@ def reconcile(contract_path: str, package: str, test_paths: tuple[str, ...]) -> 
         click.echo(f"  - {f.message}")
     click.echo(f"OK: {result.system}@{result.version} — "
                f"{result.n_boundaries} boundaries reconciled")
+
+
+@main.command()
+@click.option("--log", "log_path", default=None, type=click.Path())
+@click.option("--contract", "contract_path", default=None, type=click.Path(exists=True))
+@click.option("--json", "as_json", is_flag=True)
+def events(log_path: str | None, contract_path: str | None, as_json: bool) -> None:
+    """Summarize the validation event log: is each boundary safe to promote to `enforce`?"""
+    import json as _json
+
+    from contract_core.events import EventLog
+    from contract_core.events_report import read_records, render_human, summarize, to_dict
+
+    # Resolve the log path by constructing EventLog, so the $CONTRACT_EVENT_LOG → default fallback
+    # is reused by construction rather than reimplemented here (design §2).
+    resolved = EventLog(log_path).path
+    try:
+        records, skipped = read_records(resolved)
+    except OSError as exc:
+        click.echo(f"EVENTS FAILED — cannot read log {resolved}: {exc.strerror or exc}")
+        sys.exit(1)
+
+    contract = None
+    if contract_path is not None:
+        try:
+            contract = Contract.from_yaml(contract_path)
+        except ContractFormatError as exc:
+            click.echo("EVENTS FAILED — malformed contract:")
+            _echo_format_error(exc)
+            sys.exit(1)
+
+    report = summarize(records, contract=contract, skipped=skipped)
+    if as_json:
+        click.echo(_json.dumps(to_dict(report)))
+        return
+    if not records and contract is None:
+        click.echo(f"no events recorded at {resolved} — run in observe mode first, or check --log")
+        return
+    click.echo(render_human(report))
