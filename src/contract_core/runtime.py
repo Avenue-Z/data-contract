@@ -124,7 +124,7 @@ class ContractRuntime:
 
     def _decorator(self, direction: str, name: str) -> Decorator:
         spec = self._spec(direction, name)
-        resolved = self.resolver.resolve(spec.schema)
+        resolved = self.resolver.resolve(spec.schema_ref)
         ContractRuntime.REGISTRY.append((self.contract.system, direction, name))
 
         def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -159,7 +159,7 @@ class ContractRuntime:
 
         self.event_log.emit(
             system=self.contract.system, boundary=spec.name,
-            schema=resolved.schema, version=resolved.version,
+            schema=resolved.schema_name, version=resolved.version,
             result=result, observed_shape=observed, timestamp=self.clock(),
         )
 

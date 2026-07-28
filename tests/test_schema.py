@@ -24,3 +24,15 @@ def test_rejects_both_fields_and_json_schema():
 def test_json_schema_requires_payload_kind():
     with pytest.raises(ValueError):
         Schema(schema="x.y", version="1.0.0", kind="tabular", json_schema={"type": "object"})
+
+
+def test_models_do_not_emit_field_shadow_userwarning():
+    # §15 item 5: the `schema` field shadowed BaseModel.schema and warned on EVERY import/run,
+    # visible to every CLI consumer. Import under -W error::UserWarning must succeed.
+    import subprocess
+    import sys
+    r = subprocess.run(
+        [sys.executable, "-W", "error::UserWarning", "-c",
+         "import contract_core.schema; import contract_core.contract; import contract_core.cli"],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

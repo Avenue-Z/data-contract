@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from contract_core.types import (
     CURRENT_FORMAT_VERSION,
@@ -18,8 +18,10 @@ class BoundarySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    # `schema` is a ref ("platform.name@version"); matches the YAML key, shadows BaseModel.schema.
-    schema: str  # type: ignore[assignment]
+    # The schema ref ("platform.name@version"). Authored under the YAML key `schema`; the Python
+    # attribute is `schema_ref` (via alias) so it does NOT shadow the deprecated `BaseModel.schema`
+    # (§15 item 5).
+    schema_ref: str = Field(alias="schema")
     mode: Mode = "enforce"
     source: dict[str, Any] | None = None
     sink: dict[str, Any] | None = None
