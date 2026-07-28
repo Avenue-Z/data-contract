@@ -153,7 +153,12 @@ def events(log_path: str | None, contract_path: str | None, as_json: bool) -> No
     if not records:
         # The hint fires whether or not --contract was supplied: with a contract and a typo'd --log,
         # every boundary renders [unobserved] and the user gets no signal the path was wrong (§5).
-        click.echo(f"no events recorded at {resolved} — run in observe mode first, or check --log")
+        hint = f"no events recorded at {resolved} — run in observe mode first, or check --log"
+        if skipped:
+            # Don't launder a corrupt log into "observe never ran": surface the discarded lines,
+            # which otherwise only reach --json's summary.skipped and never the human (§ review).
+            hint += f" ({skipped} malformed line(s) skipped — the log may be corrupt)"
+        click.echo(hint)
         if contract is None:
             return
     click.echo(render_human(report))

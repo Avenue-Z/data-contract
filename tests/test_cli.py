@@ -274,3 +274,13 @@ def test_events_contract_with_missing_log_still_hints(tmp_path):
                                     "--contract", str(FIX / "consumer" / "contract.yaml")])
     assert res.exit_code == 0, res.output
     assert "check --log" in res.output.lower() or "no events" in res.output.lower()
+
+
+def test_events_corrupt_log_surfaces_skipped_not_just_run_observe(tmp_path):
+    # #2: a wholly-corrupt log with no --contract must not be laundered into "run observe first" —
+    # the skipped count has to reach the human, or the user thinks observe never ran.
+    p = tmp_path / "corrupt.jsonl"
+    p.write_text("not json\nalso not json\n")
+    res = CliRunner().invoke(main, ["events", "--log", str(p)])
+    assert res.exit_code == 0, res.output
+    assert "skipped" in res.output.lower()

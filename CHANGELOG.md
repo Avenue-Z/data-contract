@@ -25,7 +25,11 @@ changes to the public API or the authored format. Read the entry before moving a
   content for consuming agents, including a `summary.ready` gate that **fails closed**
   (`blocked == 0 and unobserved == 0 and observed > 0` — an empty or absent log reads `ready: false`,
   never a green light on zero evidence) and a `summary.skipped` count of any truncated, foreign, or
-  un-parseable log lines. An unrecognised `result` value reads as `blocked`, not `clean`. Flags: `--log` (defaults to
+  un-parseable log lines. An unrecognised `result` value reads as `blocked`, not `clean`.
+  `ready` and `skipped` are **separate facts by design**: `ready` reports whether the records that
+  were *successfully read* are clean; it does **not** fold in `skipped` (a benign truncated final
+  line would otherwise flip a clean boundary to not-ready). An agent that needs evidence
+  *completeness*, not just cleanliness, must read `skipped` alongside `ready`. Flags: `--log` (defaults to
   `$CONTRACT_EVENT_LOG`, else `./contract-events.jsonl`), `--contract`, `--json`. It is a **reporting
   tool, not a gate** — it exits 0 even when boundaries are `blocked`, non-zero only on a real error
   (an unreadable log path, a malformed contract).

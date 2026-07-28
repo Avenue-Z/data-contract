@@ -154,12 +154,20 @@ top-level `summary` object. (A single-system log — the common case — makes t
 tell that N records were discarded; omitting it would be silent data loss for the reader whose entire
 job is confidence.
 
-**`ready` is the machine gate, defined explicitly:** `ready == (blocked == 0 and unobserved == 0)` —
-`clean` and `review` are both ready (a `warn` does not block, §3). An agent keys its promote /
-don't-promote decision on this one field. Caveat, stated because it is load-bearing: without
-`--contract`, `unobserved` is `0` by construction, so `ready` reflects only *observed* boundaries and
-cannot account for a declared boundary that never fired — pass `--contract` for a `ready` that covers
-the whole contract.
+**`ready` is the machine gate, defined explicitly:** `ready == (blocked == 0 and unobserved == 0 and
+observed > 0)` — `clean` and `review` are both ready (a `warn` does not block, §3); an empty/absent
+log (`observed == 0`) reads `ready: false`, never a green light on zero evidence. An agent keys its
+promote / don't-promote decision on this one field. Two caveats, stated because they are
+load-bearing:
+
+- Without `--contract`, `unobserved` is `0` by construction, so `ready` reflects only *observed*
+  boundaries and cannot account for a declared boundary that never fired — pass `--contract` for a
+  `ready` that covers the whole contract.
+- `ready` reports cleanliness of the records **successfully read**; it deliberately does **not** fold
+  in `skipped`. A truncated final line (`skipped == 1`) is common and benign, and flipping an
+  otherwise-clean boundary to not-ready over it would be noise that trains people to ignore the gate.
+  `ready` and `skipped` are therefore **separate facts**: an agent needing evidence *completeness*,
+  not just cleanliness, must read `skipped` too.
 
 ### Exit code
 

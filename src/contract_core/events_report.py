@@ -15,11 +15,15 @@ _VERDICT_RANK = {"blocked": 0, "review": 1, "clean": 2}
 # (a scalar, an array, a foreign/old record missing a key) too — otherwise `summarize` blows up
 # with a KeyError/TypeError, and the reader is tolerant of exactly one failure mode it advertised.
 _REQUIRED_KEYS = frozenset({"system", "boundary", "schema", "version", "result", "observed_shape"})
+# The four fields that form the grouping key — they MUST be str, or the dict key is unhashable and
+# summarize crashes on a record read_records let through (e.g. `{"system": ["a"], ...}`).
+_GROUPING_KEYS = ("system", "boundary", "schema", "version")
 
 
 def _is_valid_record(obj: Any) -> bool:
     return (isinstance(obj, dict)
             and _REQUIRED_KEYS <= obj.keys()
+            and all(isinstance(obj.get(k), str) for k in _GROUPING_KEYS)
             and isinstance(obj.get("observed_shape"), dict))
 
 
@@ -104,6 +108,13 @@ class Report:
             # Fail closed: a violation would hard-fail under enforce; an unexercised boundary can't
             # be judged; and NO observed boundary at all is zero evidence, not a green light — an
             # empty/absent log must never read as ready (design §4; the agent gate keys on this).
+            #
+            # `skipped` is DELIBERATELY not folded in. `ready` means "no blocking finding in the
+            # records successfully read." A truncated final line (skipped == 1) is common and
+            # benign; making it flip an otherwise-clean boundary to not-ready would be noise that
+            # trains people to ignore the gate. An agent that needs evidence *completeness*, not
+            # just cleanliness, must read `skipped` alongside `ready` — the two are separate facts
+            # by design (a deliberate call; see the design doc §4 and CHANGELOG).
             "ready": counts["blocked"] == 0 and unobserved == 0 and observed > 0,
         }
 

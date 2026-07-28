@@ -244,3 +244,28 @@ def test_unobserved_refless_schema_has_no_dangling_at():
                                  "inputs": [{"name": "x", "schema": "foo"}]})
     out = render_human(summarize([], contract=c))
     assert "foo@" not in out
+
+
+def test_read_records_skips_record_with_non_string_grouping_field(tmp_path):
+    # #1: a valid-JSON record whose grouping field isn't a str would make the (system, boundary,
+    # schema, version) key unhashable and crash summarize — read_records must reject it.
+    import json
+    bad = {"system": ["a"], "boundary": "x", "schema": "y", "version": "z",
+           "result": "pass", "observed_shape": {}}
+    p = tmp_path / "e.jsonl"
+    p.write_text(json.dumps(bad) + "\n")
+    records, skipped = read_records(p)
+    assert (records, skipped) == ([], 1)
+
+
+def test_read_records_output_never_crashes_summarize_on_foreign_input(tmp_path):
+    # The pipeline guarantee: whatever read_records returns, summarize does not raise.
+    import json
+    lines = ["123", '{"system": ["a"], "boundary": "x", "schema": "y", "version": "z", '
+             '"result": "pass", "observed_shape": {}}', json.dumps({"nope": 1})]
+    p = tmp_path / "e.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+    records, skipped = read_records(p)
+    summarize(records, skipped=skipped)  # must not raise
+    assert records == []
+    assert skipped == 3
