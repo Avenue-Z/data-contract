@@ -1,0 +1,19 @@
+# tests/fixtures/schemas/aivx/raw_temporal/1.0.0.yaml
+# A raw `json_schema` payload declaring formats directly. The temporal checker is attached to
+# the payload validator, not to the `fields` compiler, so it reaches this authoring style too
+# — and `email` must stay annotation-only here, which is the whole point of scoping F2.
+schema: aivx.raw_temporal
+version: 1.0.0
+kind: payload
+json_schema:
+  type: object
+  properties:
+    born:
+      type: string
+      format: date
+    email:
+      type: string
+      format: email
+  required:
+    - born
+    - email
