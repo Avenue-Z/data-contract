@@ -30,7 +30,10 @@ that passes today can become a violation on this pin — read **Fixed** before m
   datetime dtype. **Behavior change:** a payload with a malformed temporal value is now a
   `value` violation, and hard-fails under `enforce`. Checking is scoped to `date` and
   `date-time` only; `email`, `uri` and the rest stay annotation-only, so a raw `json_schema`
-  that declares them is unaffected. No new dependency — `date-time` is backed by
+  that declares them is unaffected. The checker is attached to the payload validator, not to
+  the `fields` compiler, so **a raw `json_schema` that declares `format: date` or `date-time`
+  is checked too** and can newly fail on this pin — the same fails-on-upgrade class `email`
+  was deliberately left out of. No new dependency — `date-time` is backed by
   `datetime.fromisoformat`.
 - **A raw `json_schema` payload closes on an output boundary** (F5). It was returned verbatim
   with the `open` argument ignored, so `additionalProperties` was absent, extras were allowed,
@@ -49,6 +52,11 @@ that passes today can become a violation on this pin — read **Fixed** before m
   absent version, and an unsupported pin form, listing the versions that do exist and
   suggesting `@1`. The two supported forms (`@MAJOR`, `@MAJOR.MINOR.PATCH`) are documented in
   the authoring skill. Resolution semantics are unchanged.
+- **`contract lint` prints that diagnosis instead of the bare ref** (F4). It caught
+  `SchemaNotFound` and reprinted only `  - s.tab@1.0`, discarding the message — and CI reaches
+  `lint` long before it reaches `resolve()`, so the surface where a bad pin is actually hit
+  first was the one surface the diagnosis never reached. Each unresolved ref now carries its
+  full reason. Exit code and the `LINT FAILED` header are unchanged.
 
 ### Changed
 

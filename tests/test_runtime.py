@@ -290,6 +290,45 @@ def test_payload_malformed_temporal_value_is_a_violation(tmp_path, field, payloa
     assert diff.constraint == f"format={'date' if field == 'day' else 'date-time'}"
 
 
+def _raw_temporal_runtime(tmp_path):
+    contract = Contract.model_validate({
+        "system": "demo", "version": "1.0.0",
+        "outputs": [{"name": "person", "schema": "aivx.raw_temporal@1.0.0", "mode": "enforce"}],
+    })
+    log = EventLog(tmp_path / "e.jsonl")
+    return ContractRuntime(contract, Resolver([FIX / "schemas"]), event_log=log,
+                           clock=lambda: "2026-07-16T00:00:00+00:00"), log
+
+
+def test_raw_json_schema_temporal_format_is_checked_too(tmp_path):
+    # The checker hangs off the payload validator, so it reaches a hand-authored
+    # `format: date` as well — a raw-schema author sees new failures on this pin, and the
+    # CHANGELOG says so. Pinned here so that disclosure cannot quietly stop being true.
+    rt, _ = _raw_temporal_runtime(tmp_path)
+
+    @rt.output("person")
+    def produce():
+        return {"born": "NOPE", "email": "someone@example.com"}
+
+    with pytest.raises(ContractViolation) as ei:
+        produce()
+    diff = ei.value.diffs[0]
+    assert (diff.field, diff.problem, diff.constraint) == ("born", "value", "format=date")
+
+
+def test_raw_json_schema_email_format_stays_annotation_only(tmp_path):
+    # The other half of the same disclosure: F2 is scoped to temporal on purpose, so a raw
+    # schema declaring `format: email` must NOT start failing.
+    rt, log = _raw_temporal_runtime(tmp_path)
+
+    @rt.output("person")
+    def produce():
+        return {"born": "2026-07-16", "email": "not-an-email"}
+
+    produce()
+    assert log.records()[-1]["result"] == "pass"
+
+
 # ---- raw `json_schema` payloads on a closed output (F5) ----
 
 

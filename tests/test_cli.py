@@ -24,6 +24,19 @@ def test_lint_unresolved_ref_fails():
     assert "peec.nonexistent@1" in res.output
 
 
+def test_lint_surfaces_the_resolvers_pin_diagnosis():
+    # CI hits `lint` before it ever hits `resolve()`, so reprinting the bare ref strands the
+    # F4 diagnosis behind the surface nobody reaches first. Lint must carry the message.
+    runner = CliRunner()
+    res = runner.invoke(main, ["lint", "--contract", str(FIX / "contract_bad_pin.yaml"),
+                               "--schemas", str(FIX / "schemas")])
+    assert res.exit_code == 1
+    assert "peec.prompts_export@1.0" in res.output
+    assert "pin forms are @MAJOR" in res.output
+    assert "Did you mean @1?" in res.output
+    assert "1.0.0, 1.1.0, 2.0.0" in res.output
+
+
 # ---- lint validates every resolver-visible schema (design §4.1.1) ----
 
 def _lint_with_malformed():
