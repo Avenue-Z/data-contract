@@ -528,6 +528,35 @@ belong in this repo, not in any one pilot.**
    alias); the event log (§4.4) is a hardcoded local JSONL with no sink abstraction and, in `observe`,
    no reader — its whole value assumes someone reviews it.
 
+   *Event-log status, 2026-07-29 — the two halves have diverged; they are no longer one item.*
+   **The reader half is CLOSED** by `contract events` (0.6.0): the log has a reader, and
+   `--json`'s `summary.ready` fails closed, so promotion can be gated on observed evidence
+   instead of on someone remembering to look. Design:
+   [`2026-07-24-event-log-reader-design.md`](2026-07-24-event-log-reader-design.md).
+   **The sink half is DEFERRED, deliberately, with a named trigger** — not carried forward as
+   unfinished work. Rationale: the writer is the easy part; what the writer does when the
+   destination is unreachable is the hard part, and it is undecidable in the abstract. A sink that
+   **raises** makes contract validation a source of production outages. A sink that **swallows**
+   creates silent evidence loss — strictly worse than no sink, because boundaries then get promoted
+   on evidence that was wrongly believed to have arrived. Choosing needs a real deployment with real
+   failure modes. Deferring is close to free structurally: `load_runtime` is the single construction
+   point, so a sink arrives later as a defaulted keyword-only argument (additive, not breaking), and
+   JSONL records tolerate new keys, so the record format is not a trap either. Nothing becomes
+   impossible by waiting. `EventLog` therefore **stays off the public API** (R9), because exporting
+   it would promise exactly this unbuilt hook.
+   **Trigger: the first container deploy that runs a boundary in `observe`.** All workloads are
+   local or CI today, where the evidence already survives — CI needs no library change (the log path
+   and the reader are both parameters already); see `docs/consuming-repo-setup.md` §8 for the
+   recipe. When the trigger fires, work it in order and stop at the first answer that holds:
+   (1) point the log path at durable storage; (2) ship the file on exit as an explicit job step;
+   (3) only then a sink abstraction — and it must answer raise-vs-swallow **before** any interface
+   is published. Until then, run `observe` only where the evidence survives.
+   *Failure delivery under `enforce` is a separate question and is **closed as intended**: a
+   violation raises and stops the job, and surfacing that is the platform's job (a red CI check, a
+   failed Cloud Run job), not the library's. A library that opens a network connection to announce a
+   validation failure can take down the job it exists to protect — the same reasoning that keeps
+   `disabled()` off the event log. Documented in `docs/consuming-repo-setup.md` §8.*
+
 **New — pilot/usage guidance (fix in the consuming repo + the §5.5 skill, not the library)**
 6. **Decorate the true raw read, not a post-cleaning function.** The pilot decorated `load_prompts`,
    which strips/filters *before* returning, so it validates a partly-cleaned frame — weakening the

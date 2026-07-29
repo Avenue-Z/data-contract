@@ -1,0 +1,9 @@
+# tests/fixtures/contract_bad_pin.yaml
+# `@1.0` is neither supported pin form: it is looked up as a literal 1.0.yaml and misses
+# the 1.0.0.yaml beside it. Exercises the F4 diagnosis reaching the lint surface.
+system: demo
+version: 1.0.0
+inputs:
+  - name: prompts
+    schema: peec.prompts_export@1.0
+    source: {kind: file, format: csv}

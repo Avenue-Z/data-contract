@@ -12,14 +12,29 @@ from contract_core.types import Field
 
 _ODCS_LOGICAL = {
     "string": "string", "int": "integer", "float": "number",
-    "bool": "boolean", "date": "date", "datetime": "date",
+    # ODCS v3.1's logicalType enum carries a distinct `timestamp`, so collapsing `datetime`
+    # onto `date` was our loss, not the standard's: it dropped the time component and left a
+    # consumer unable to tell the two apart.
+    "bool": "boolean", "date": "date", "datetime": "timestamp",
 }
+
+# JSON Schema `type` -> ODCS logicalType, for a payload authored as a raw `json_schema`.
+# `date`/`date-time` are carried by `format`, not `type`, so they are resolved separately.
+_ODCS_FROM_JSON_TYPE = {
+    "string": "string", "integer": "integer", "number": "number",
+    "boolean": "boolean", "array": "array", "object": "object",
+}
+_ODCS_FROM_JSON_FORMAT = {"date": "date", "date-time": "timestamp"}
 
 # `logicalTypeOptions` is validated by an if/then chain keyed on logicalType, with
 # additionalProperties: false on every branch — and there is NO boolean branch, so options
 # on a boolean field validate vacuously. Only emit the key for a type that has a branch
-# (design §5.4).
-_TYPES_WITH_OPTIONS = {"string", "integer", "number", "date"}
+# (design §5.4). `timestamp` shares an `anyOf` branch with `time`, so it belongs here for
+# the same reason `date` does. Both temporal entries are unreachable today — `Field`
+# restricts minimum/maximum to int/float and min_length to string, so a temporal field can
+# carry no options at all — but they keep this set a faithful reading of the ODCS schema,
+# which is what stops `datetime` from silently dropping options if bounds ever widen.
+_TYPES_WITH_OPTIONS = {"string", "integer", "number", "date", "timestamp"}
 
 
 def _logical_type_options(f: Field) -> dict[str, Any]:
@@ -55,9 +70,53 @@ def _quality_rules(f: Field) -> list[dict[str, Any]]:
     return rules
 
 
+def _raw_logical_type(subschema: dict[str, Any]) -> str | None:
+    """The ODCS logicalType for one raw JSON Schema property, or None if it declares no type.
+
+    `logicalType` is optional in ODCS (only `name` is required on a property), so a property
+    the author left untyped is exported without one. Guessing `string` would assert a type
+    the raw schema never claimed.
+
+    A union type (`["number", "null"]`, how a raw schema spells nullable) exports as its
+    single non-null member; anything more genuinely has no one logicalType.
+    """
+    fmt = subschema.get("format")
+    if isinstance(fmt, str) and fmt in _ODCS_FROM_JSON_FORMAT:
+        return _ODCS_FROM_JSON_FORMAT[fmt]
+    declared = subschema.get("type")
+    if isinstance(declared, list):
+        non_null = [t for t in declared if t != "null"]
+        declared = non_null[0] if len(non_null) == 1 else None
+    return _ODCS_FROM_JSON_TYPE.get(declared) if isinstance(declared, str) else None
+
+
+def _raw_schema_props(json_schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Translate a raw `json_schema` payload's `properties` into ODCS properties.
+
+    Without this a raw-`json_schema` payload exported as a named table with no properties:
+    the whole shape dropped from the ODCS document, while `lint` (to_odcs + validate_odcs)
+    still passed on the hollow block. Shape only — value constraints authored inside a raw
+    schema are not translated, because they have no declared-type context to validate
+    against the way an authored `Field` does.
+    """
+    properties = json_schema.get("properties")
+    if not isinstance(properties, dict):
+        return []
+    props: list[dict[str, Any]] = []
+    for pname, subschema in properties.items():
+        prop: dict[str, Any] = {"name": str(pname)}
+        logical = _raw_logical_type(subschema) if isinstance(subschema, dict) else None
+        if logical is not None:
+            prop["logicalType"] = logical
+        props.append(prop)
+    return props
+
+
 def _schema_block(name: str, resolved: Schema) -> dict[str, Any]:
     props: list[dict[str, Any]] = []
-    if resolved.fields is not None:
+    if resolved.json_schema is not None:
+        props = _raw_schema_props(resolved.json_schema)
+    elif resolved.fields is not None:
         for f in resolved.fields:
             logical = _ODCS_LOGICAL[f.type]
             # `required` is deliberately NOT emitted: the ODCS slot is a null flag, not a

@@ -87,9 +87,32 @@ fields:
     nullable: false                  # default false
 ```
 
+A `date`/`datetime` field is value-checked on the payload path too, not just the tabular one: a
+payload carrying `"not-a-date"` is a `value` violation, so temporal fields must be ISO-8601 strings
+(`2026-07-16`, `2026-07-16T09:30:00Z`). `datetime` is checked with `datetime.fromisoformat`, which
+is looser than RFC 3339 — a date-only `2026-07-16` passes a `datetime` field, mirroring the tabular
+path. The check catches malformed values, not under-specified ones. The same applies to a
+`format: date`/`date-time` declared inside a raw `json_schema`; other formats (`email`, `uri`)
+stay annotation-only and are never checked.
+
+A **payload authored as a raw `json_schema`** is used as written, with one exception: if it does not
+set `additionalProperties`, the boundary's direction fills it in — open on `raw`/`inputs`, closed on
+`outputs`, so an undeclared output key warns exactly as it does for a `fields` payload. Set
+`additionalProperties` yourself to override that. Its `properties` are translated into the ODCS
+export; anything else it declares (nested shapes, `oneOf`, value constraints) is not.
+
 **Contract** `contract.yaml`. Top level is `system` + `version` (NOT `name`). Groups are `raw`,
 `inputs`, `outputs` (plural). **Every boundary — including `raw` — needs a `schema:` ref.** Refs are
-major-pinned `platform.name@major`:
+major-pinned `platform.name@major`.
+
+There are exactly **two pin forms**, and the familiar `@1.0` is not one of them:
+
+| Pin | Means |
+| --- | --- |
+| `@1` | the highest `1.x.x` on the search path — **use this** |
+| `@1.0.0` | that exact file, pinned forever |
+
+`@1.0` resolves as a literal `1.0.yaml` lookup and fails even when `1.0.0.yaml` exists.
 
 ```yaml
 system: tiktok-brand-pulse           # NOT `name:`
@@ -127,6 +150,8 @@ outputs:                             # plural
 | `Extra inputs are not permitted` on `input`/`output`/`name` | Groups are plural `inputs:`/`outputs:`; there is no top-level `name:`. Strict `extra="forbid"`. |
 | `raw.0.schema: Field required` | **`raw` boundaries are schema'd too.** Author a per-call-site raw schema and reference it. |
 | `LINT FAILED — unresolved schema refs` | Ref must be `platform.name@major` and the file must live at `schemas/<platform>/<name>/<semver>.yaml`. Flat `schemas/x.yaml` won't resolve. |
+| `no file 1.0.yaml; pin forms are @MAJOR ... Did you mean @1?` | `@1.0` is not a pin form. Use `@1` (highest `1.x.x`) or `@1.0.0` (exact). |
+| `retyped field '<return>' expected dataframe, observed NoneType` | The decorated function returned the wrong top-level type — usually a forgotten `return`. (Older versions crashed with a raw `AttributeError` here, in every mode.) |
 | "authored against a newer contract-core" hint on a file you just wrote | It's usually a **wrong/typo'd key**, not a version problem — strict keys surface with that hint. Check the key against a template. |
 | `reconcile` category-D: "raw boundary declared but no drift test" | Add `@pytest.mark.raw_drift("<name>")` (name matches the raw boundary) in `tests/`. |
 | Decorated a post-cleaning function as `raw` | Decorate the **true raw read** (before any strip/filter), or drift hides in your cleaning step. |

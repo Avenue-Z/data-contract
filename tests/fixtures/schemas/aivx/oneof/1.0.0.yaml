@@ -1,0 +1,17 @@
+# tests/fixtures/schemas/aivx/oneof/1.0.0.yaml
+# A raw `json_schema` payload authored as a composition: its properties live inside the
+# branches, where a sibling `additionalProperties` cannot see them. Exists so the F5
+# injection can never start closing this shape and warning on every valid payload.
+schema: aivx.oneof
+version: 1.0.0
+kind: payload
+json_schema:
+  oneOf:
+    - type: object
+      properties:
+        a: {type: string}
+      required: [a]
+    - type: object
+      properties:
+        b: {type: string}
+      required: [b]

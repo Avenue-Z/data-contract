@@ -119,6 +119,66 @@ def test_a_schema_with_all_four_constraints_compiles_to_valid_odcs():
                    "version": "1.0.0", "status": "active", "schema": [block]})
 
 
+def test_datetime_exports_as_timestamp_not_date():
+    # ODCS v3.1's logicalType enum has a distinct `timestamp`; mapping `datetime` to `date`
+    # dropped the time component and left a consumer unable to tell the two types apart.
+    assert _block(type="date")["logicalType"] == "date"
+    assert _block(type="datetime")["logicalType"] == "timestamp"
+    validate_odcs(_doc(_block(type="datetime")))
+
+
+# ---- raw `json_schema` payloads (F6) ----
+
+def _raw_payload():
+    return Schema(schema="x.raw", version="1.0.0", kind="payload", json_schema={
+        "type": "object",
+        "properties": {
+            "slug": {"type": "string"},
+            "score": {"type": "number"},
+            "day": {"type": "string", "format": "date"},
+            "at": {"type": "string", "format": "date-time"},
+            "ok": {"type": "boolean"},
+            "count": {"type": "integer"},
+            "tags": {"type": "array"},
+            "meta": {"type": "object"},
+            "nullable_score": {"type": ["number", "null"]},
+            "untyped": {},
+        },
+        "required": ["slug"],
+    })
+
+
+def test_json_schema_payload_exports_its_shape_to_odcs():
+    # `_schema_block` walked only `resolved.fields`, so a raw-json_schema payload exported
+    # as a named table with NO properties — the whole shape silently dropped, and `lint`
+    # (to_odcs + validate_odcs) still passed on the hollow block.
+    props = _schema_block("raw_out", _raw_payload())["properties"]
+    assert [(p["name"], p.get("logicalType")) for p in props] == [
+        ("slug", "string"), ("score", "number"), ("day", "date"), ("at", "timestamp"),
+        ("ok", "boolean"), ("count", "integer"), ("tags", "array"), ("meta", "object"),
+        ("nullable_score", "number"),
+        # `logicalType` is optional in ODCS. A raw schema that declares no type has no type
+        # to export, and guessing `string` would assert something the author did not.
+        ("untyped", None),
+    ]
+    validate_odcs(_doc_blocks([_schema_block("raw_out", _raw_payload())]))
+
+
+def test_json_schema_payload_without_properties_exports_an_empty_block():
+    # A raw schema that pins no `properties` (e.g. a bare `{"type": "object"}`) has no shape
+    # to translate. An empty property list is the honest export, and stays ODCS-valid.
+    s = Schema(schema="x.bare", version="1.0.0", kind="payload",
+               json_schema={"type": "object"})
+    block = _schema_block("bare", s)
+    assert block["properties"] == []
+    validate_odcs(_doc_blocks([block]))
+
+
+def _doc_blocks(blocks):
+    return {"apiVersion": "v3.1.0", "kind": "DataContract", "id": "x", "name": "x",
+            "version": "1.0.0", "status": "active", "schema": blocks}
+
+
 def test_a_legacy_unconstrained_schema_has_a_pinned_odcs_shape():
     # The ODCS export changed for schemas that did NOT change. peec.prompts_export@1.0.0
     # declares zero constraints and was untouched by the value-constraints work, yet every
