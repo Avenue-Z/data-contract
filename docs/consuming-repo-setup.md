@@ -301,6 +301,81 @@ jobs:
           contract reconcile --contract contract.yaml --package my_pkg --tests tests
 ```
 
+## 8. Where the evidence goes, and who is meant to look
+
+Two different questions hide behind "how do I find out a contract failed", and they have two
+different answers. Getting them mixed up is why observe-mode adoption stalls.
+
+### Under `enforce`, nothing in this library notifies you — by design
+
+A violation raises `ContractViolation`, which stops the job. **Delivery is your platform's job**, not
+the library's: a failed GitHub Actions run emails and shows a red check, a failed Cloud Run job
+surfaces in Cloud Logging and whatever alerting you point at it. That is deliberate. An event write
+is I/O that can itself fail, and a library that opens a network connection to announce a validation
+failure can take down the job it was meant to protect. If you want a Slack ping, hang it off the
+platform's job-failure signal, where it belongs.
+
+### Under `observe`, nothing fails — so you must go and read
+
+`observe` validates, logs, and never raises. The run stays green whether or not the shape drifted,
+which is exactly the point (it cannot break a working job) and exactly the trap: **no one finds out
+unless something reads the log.** That reader is `contract events`, and the evidence has to survive
+the run for it to have anything to read.
+
+The runtime appends JSON Lines to `$CONTRACT_EVENT_LOG`, defaulting to `./contract-events.jsonl`.
+Where to point it depends on where you run:
+
+| Where you run | Where the evidence should go |
+| --- | --- |
+| Local / a persistent host | The default is fine. The file accumulates across runs; `contract events` reads it in place. |
+| GitHub Actions | A path inside the workspace, then upload it as a build artifact — the runner's disk is destroyed when the job ends. |
+| A container (e.g. Cloud Run) | **Not yet answered.** The container filesystem is ephemeral, so the default writes evidence nobody can ever read. See the note below before adopting `observe` there. |
+
+In CI this needs no library support — the log path and the reader are both already parameters:
+
+```yaml
+      - name: Run the pipeline in observe mode
+        env:
+          CONTRACT_EVENT_LOG: ${{ github.workspace }}/contract-events.jsonl
+        run: python -m my_pkg.main
+
+      - name: Summarize what the boundaries observed
+        run: contract events --log contract-events.jsonl --contract contract.yaml --json > events.json
+
+      - uses: actions/upload-artifact@v4     # the evidence outlives the runner
+        with:
+          name: contract-events
+          path: |
+            contract-events.jsonl
+            events.json
+```
+
+`contract events --json` carries `summary.ready`, which **fails closed** — an empty or absent log
+reads `ready: false`, never a green light on zero evidence. So promotion to `enforce` can be gated on
+observed evidence rather than on someone remembering to look. That is the intended watcher.
+
+### Containers: an open decision, not an oversight
+
+There is no sink abstraction — the event log writes to a filesystem path and nothing else. On an
+ephemeral container that means observe-mode evidence dies with the container.
+
+This is deliberately unbuilt rather than overlooked, because the hard part is not the writer, it is
+what the writer does when the destination is down. A sink that **raises** turns contract validation
+into a source of production outages; a sink that **swallows** creates silent evidence loss, which is
+worse than no sink at all, because people promote boundaries on evidence they wrongly believe
+arrived. Choosing between those needs a real deployment with real failure modes, not a guess.
+
+**Trigger for revisiting: the first container deploy that runs a boundary in `observe`.** At that
+point, work the question in this order, and stop at the first answer that holds:
+
+1. Can the log path point at durable storage (a mounted bucket, a volume)? If so, nothing needs
+   building.
+2. Can the job ship the file on exit as an explicit step, the way CI uploads an artifact?
+3. Only if neither holds does a sink abstraction earn its place — and it must answer the
+   raise-vs-swallow question **before** any interface is published.
+
+Until then, run `observe` where the evidence survives: locally and in CI.
+
 ---
 
 *When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin + deploy token), §3 (the
