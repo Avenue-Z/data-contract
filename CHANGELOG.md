@@ -78,6 +78,14 @@ that passes today can become a violation on this pin — read **Fixed** before m
   enum carries a distinct `timestamp`, so collapsing both onto `date` dropped the time
   component and left a consumer unable to tell the two types apart. A consumer diffing ODCS
   documents will see this change on any schema with a `datetime` field.
+- **The `ci-gate.yml` template no longer hardcodes a stale tag.** It pinned the reusable
+  workflow at a literal `@v0.5.0` while the comment beside it said "SAME tag as your pin" and
+  every other pin reference — including the line above it and `docs/consuming-repo-setup.md`
+  §7 — used the `@vX.Y.Z` placeholder. It shipped that way in v0.5.0, v0.6.0 and v0.6.1, so
+  **anyone who copied the template and did not edit that line is running the v0.5.0 gate
+  against a newer pin** — the exact mismatch the template's own header calls silent CLI
+  breakage. Now a placeholder, so it cannot go stale again. Template only; the gate workflow
+  itself is unchanged, and `>= v0.5.0` as the gate's first release still holds.
 
 ## [0.6.1] — 2026-07-28
 
