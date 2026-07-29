@@ -11,6 +11,8 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-29
+
 Closes the six findings from the v0.6.1 code review
 (`docs/notes/2026-07-28-code-review-v0.6.1.md`). Two of them tighten validation, so a payload
 that passes today can become a violation on this pin — read **Fixed** before moving it.
