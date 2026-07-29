@@ -61,7 +61,11 @@ class Resolver:
                 path = schema_dir / f"{version}.yaml"
                 if path.is_file():
                     return Schema.from_yaml(path)
-            else:
+            elif version.isdigit():
+                # Guarded, not assumed: `int(version)` ran before `_not_found` could, so a
+                # forgotten pin ("s.tab") or a non-numeric major ("@v1") escaped as a bare
+                # ValueError that `lint` does not catch. A non-major pin now simply matches
+                # nothing and falls through to the diagnosis below.
                 major = int(version)
                 parsed = ((p, parse_semver(p.stem)) for p in schema_dir.glob("*.yaml"))
                 candidates = [(p, v) for p, v in parsed if v is not None and v[0] == major]
@@ -71,7 +75,7 @@ class Resolver:
         raise SchemaNotFound(self._not_found(ref, name, version, searched))
 
     def _not_found(self, ref: str, name: str, version: str, searched: list[Path]) -> str:
-        """Say which of the three ways this failed, so the reader fixes the right thing.
+        """Say which of the four ways this failed, so the reader fixes the right thing.
 
         One line on purpose: `SchemaNotFound` subclasses `KeyError`, whose `str()` is the
         repr of its argument, so an embedded newline renders as a literal `\\n`.
@@ -85,6 +89,9 @@ class Resolver:
         if _is_partial_pin(version):
             return (f"{ref} — no file {version}.yaml; pin forms are {_PIN_FORMS}. "
                     f"Did you mean @{version.split('.')[0]}? ({have})")
+        if "." not in version and not version.isdigit():
+            what = "no version pin" if not version else f"{version!r} is not a numeric major"
+            return f"{ref} — {what}; pin forms are {_PIN_FORMS}. ({have})"
         missing = (f"no file {version}.yaml" if "." in version
                    else f"no version {version}.x.x")
         return f"{ref} — {missing}; {have}"

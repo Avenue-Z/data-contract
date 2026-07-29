@@ -77,6 +77,34 @@ def test_passthrough_does_not_mutate_the_authored_schema():
     assert "additionalProperties" not in s.json_schema
 
 
+@pytest.mark.parametrize("applicator", ["oneOf", "anyOf", "allOf"])
+def test_passthrough_leaves_a_composition_schema_open(applicator):
+    # `additionalProperties` consults only its SIBLING `properties`/`patternProperties`; it
+    # cannot see into a subschema. Closing a composition schema — which declares its
+    # properties inside the branches — therefore rejects every key, so a fully valid payload
+    # warns as an extra on every run and poisons the event log the promotion gate reads.
+    # Staying open is the pre-F5 behavior: under-enforcing beats a permanent false positive.
+    s = Schema.model_validate({
+        "schema": "x.y", "version": "1.0.0", "kind": "payload",
+        "json_schema": {applicator: [
+            {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+            {"type": "object", "properties": {"b": {"type": "string"}}, "required": ["b"]},
+        ]},
+    })
+    assert "additionalProperties" not in to_json_schema(s, open=False)
+    assert "additionalProperties" not in to_json_schema(s, open=True)
+
+
+def test_passthrough_still_closes_a_composition_schema_the_author_pinned():
+    # The author still owns openness: an explicit pin wins over the skip above.
+    s = Schema.model_validate({
+        "schema": "x.y", "version": "1.0.0", "kind": "payload",
+        "json_schema": {"additionalProperties": False,
+                        "oneOf": [{"type": "object", "properties": {"a": {"type": "string"}}}]},
+    })
+    assert to_json_schema(s, open=True)["additionalProperties"] is False
+
+
 # ---- value constraints (design §5.1) ----
 
 def _schema(**field_kwargs):

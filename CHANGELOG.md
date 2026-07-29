@@ -40,7 +40,12 @@ that passes today can become a violation on this pin — read **Fixed** before m
   and an undeclared output key never warned — while a `fields` payload of the same shape did.
   The direction now fills `additionalProperties` **only when the authored schema does not set
   it**; an author who pins it still wins. **Behavior change:** an extra key on such an output
-  now logs `warn` instead of `pass` (it still never raises).
+  now logs `warn` instead of `pass` (it still never raises). **A schema authored with a
+  composition keyword is left open**: `additionalProperties` consults only its sibling
+  `properties`/`patternProperties` and cannot see into a `oneOf`/`anyOf`/`allOf`/`$ref`/`if`
+  branch, so closing such a schema rejected every key — a valid payload warned as an extra
+  on every run, filling the event log that `contract events` gates promotion on with
+  permanent false positives. An author who pins `additionalProperties` still wins.
 - **A raw `json_schema` payload exports its shape to ODCS** (F6). `_schema_block` walked only
   `fields`, so it exported as a named table with no properties — the shape silently dropped,
   while `lint` (`to_odcs` + `validate_odcs`) still passed on the hollow block. Its
@@ -57,6 +62,13 @@ that passes today can become a violation on this pin — read **Fixed** before m
   `lint` long before it reaches `resolve()`, so the surface where a bad pin is actually hit
   first was the one surface the diagnosis never reached. Each unresolved ref now carries its
   full reason. Exit code and the `LINT FAILED` header are unchanged.
+- **A forgotten or non-numeric version pin diagnoses itself too** (F4). `int(version)` ran
+  before the diagnosis could, so `s.tab` (no pin at all) and `s.tab@v1` raised a bare
+  `ValueError: invalid literal for int()` — which `lint` does not catch, so it exited 1 with
+  a traceback and **no output at all**: no `LINT FAILED` header, no ref name, no reason. A
+  forgotten pin is the likeliest pin mistake there is and gave the worst message of any of
+  them. Both now raise `SchemaNotFound` naming the supported forms and the versions that
+  exist. Resolution semantics are unchanged: no ref that resolved before resolves differently.
 
 ### Changed
 

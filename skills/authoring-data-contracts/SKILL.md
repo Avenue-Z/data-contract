@@ -89,7 +89,11 @@ fields:
 
 A `date`/`datetime` field is value-checked on the payload path too, not just the tabular one: a
 payload carrying `"not-a-date"` is a `value` violation, so temporal fields must be ISO-8601 strings
-(`2026-07-16`, `2026-07-16T09:30:00Z`).
+(`2026-07-16`, `2026-07-16T09:30:00Z`). `datetime` is checked with `datetime.fromisoformat`, which
+is looser than RFC 3339 — a date-only `2026-07-16` passes a `datetime` field, mirroring the tabular
+path. The check catches malformed values, not under-specified ones. The same applies to a
+`format: date`/`date-time` declared inside a raw `json_schema`; other formats (`email`, `uri`)
+stay annotation-only and are never checked.
 
 A **payload authored as a raw `json_schema`** is used as written, with one exception: if it does not
 set `additionalProperties`, the boundary's direction fills it in — open on `raw`/`inputs`, closed on

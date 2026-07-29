@@ -29,8 +29,12 @@ _ODCS_FROM_JSON_FORMAT = {"date": "date", "date-time": "timestamp"}
 # `logicalTypeOptions` is validated by an if/then chain keyed on logicalType, with
 # additionalProperties: false on every branch — and there is NO boolean branch, so options
 # on a boolean field validate vacuously. Only emit the key for a type that has a branch
-# (design §5.4).
-_TYPES_WITH_OPTIONS = {"string", "integer", "number", "date"}
+# (design §5.4). `timestamp` shares an `anyOf` branch with `time`, so it belongs here for
+# the same reason `date` does. Both temporal entries are unreachable today — `Field`
+# restricts minimum/maximum to int/float and min_length to string, so a temporal field can
+# carry no options at all — but they keep this set a faithful reading of the ODCS schema,
+# which is what stops `datetime` from silently dropping options if bounds ever widen.
+_TYPES_WITH_OPTIONS = {"string", "integer", "number", "date", "timestamp"}
 
 
 def _logical_type_options(f: Field) -> dict[str, Any]:

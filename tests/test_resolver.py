@@ -66,3 +66,22 @@ def test_an_unresolvable_exact_version_reports_the_versions_that_exist():
     with pytest.raises(SchemaNotFound) as ei:
         r.resolve("peec.prompts_export@9.9.9")
     assert "1.0.0" in str(ei.value)
+
+
+@pytest.mark.parametrize("ref", [
+    "peec.prompts_export",       # forgotten pin — at least as common as @1.0
+    "peec.prompts_export@",      # the `@` typed, the major forgotten
+    "peec.prompts_export@v1",    # a non-numeric major
+])
+def test_an_unparseable_major_is_a_diagnosis_not_a_valueerror(ref):
+    # `int(version)` ran before the diagnosis could, so these escaped as a bare
+    # ValueError("invalid literal for int()") that `lint` does not catch — no LINT FAILED
+    # header, no ref name, no message at all. A forgotten pin is the likeliest bad pin
+    # there is, and it gave the worst output of any of them.
+    r = Resolver([FIX])
+    with pytest.raises(SchemaNotFound) as ei:
+        r.resolve(ref)
+    msg = str(ei.value)
+    assert ref in msg
+    assert "@1" in msg and "@1.0.0" in msg  # both supported forms are named
+    assert "available: 1.0.0" in msg        # and the versions that do exist

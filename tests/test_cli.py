@@ -34,7 +34,7 @@ def test_lint_surfaces_the_resolvers_pin_diagnosis():
     assert "peec.prompts_export@1.0" in res.output
     assert "pin forms are @MAJOR" in res.output
     assert "Did you mean @1?" in res.output
-    assert "1.0.0, 1.1.0, 2.0.0" in res.output
+    assert "1.0.0" in res.output  # not the full list: adding a fixture version must not break this
 
 
 # ---- lint validates every resolver-visible schema (design §4.1.1) ----

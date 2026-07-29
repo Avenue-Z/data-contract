@@ -367,3 +367,23 @@ def test_raw_json_schema_payload_extra_key_passes_on_input(tmp_path):
 
     load()
     assert log.records()[-1]["result"] == "pass"
+
+
+def test_composition_payload_does_not_warn_on_a_valid_output(tmp_path):
+    # The end-to-end shape of the compiler skip: a `oneOf` payload declares `a` inside a
+    # branch, so closing it named `a` itself as an extra. A valid payload warned on every
+    # single run — permanent false positives in the log `contract events` gates on.
+    contract = Contract.model_validate({
+        "system": "demo", "version": "1.0.0",
+        "outputs": [{"name": "either", "schema": "aivx.oneof@1.0.0", "mode": "observe"}],
+    })
+    log = EventLog(tmp_path / "e.jsonl")
+    rt = ContractRuntime(contract, Resolver([FIX / "schemas"]), event_log=log,
+                         clock=lambda: "2026-07-16T00:00:00+00:00")
+
+    @rt.output("either")
+    def produce():
+        return {"a": "hello"}
+
+    produce()
+    assert log.records()[-1]["result"] == "pass"
