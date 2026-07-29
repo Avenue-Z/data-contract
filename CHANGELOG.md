@@ -11,6 +11,74 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-29
+
+Closes the six findings from the v0.6.1 code review
+(`docs/notes/2026-07-28-code-review-v0.6.1.md`). Two of them tighten validation, so a payload
+that passes today can become a violation on this pin — read **Fixed** before moving it.
+
+### Fixed
+
+- **A wrong-type return no longer crashes the job in `observe`/`warn`** (F1). The validators
+  reached straight for `.columns`/`.keys()`, so a decorated function returning `None` (a
+  forgotten `return`), a `dict` where a DataFrame was declared, or a `list` where an object
+  was raised a raw `AttributeError` in **every** mode — including `observe`, whose documented
+  promise is to validate and never fail the job, and which is the adoption on-ramp. A wrong
+  top-level type is now a `retyped` diff on the pseudo-field `<return>`: logged under
+  `observe`/`warn`, a `ContractViolation` under `enforce`.
+- **Payload `date`/`datetime` fields are value-checked** (F2). They compiled to a JSON Schema
+  `format`, which is annotation-only unless the validator is handed a format checker — so
+  `"not-a-date"` passed a payload boundary silently while the tabular path enforced a real
+  datetime dtype. **Behavior change:** a payload with a malformed temporal value is now a
+  `value` violation, and hard-fails under `enforce`. Checking is scoped to `date` and
+  `date-time` only; `email`, `uri` and the rest stay annotation-only, so a raw `json_schema`
+  that declares them is unaffected. The checker is attached to the payload validator, not to
+  the `fields` compiler, so **a raw `json_schema` that declares `format: date` or `date-time`
+  is checked too** and can newly fail on this pin — the same fails-on-upgrade class `email`
+  was deliberately left out of. No new dependency — `date-time` is backed by
+  `datetime.fromisoformat`.
+- **A raw `json_schema` payload closes on an output boundary** (F5). It was returned verbatim
+  with the `open` argument ignored, so `additionalProperties` was absent, extras were allowed,
+  and an undeclared output key never warned — while a `fields` payload of the same shape did.
+  The direction now fills `additionalProperties` **only when the authored schema does not set
+  it**; an author who pins it still wins. **Behavior change:** an extra key on such an output
+  now logs `warn` instead of `pass` (it still never raises). **A schema authored with a
+  composition keyword is left open**: `additionalProperties` consults only its sibling
+  `properties`/`patternProperties` and cannot see into a `oneOf`/`anyOf`/`allOf`/`$ref`/`if`
+  branch, so closing such a schema rejected every key — a valid payload warned as an extra
+  on every run, filling the event log that `contract events` gates promotion on with
+  permanent false positives. An author who pins `additionalProperties` still wins.
+- **A raw `json_schema` payload exports its shape to ODCS** (F6). `_schema_block` walked only
+  `fields`, so it exported as a named table with no properties — the shape silently dropped,
+  while `lint` (`to_odcs` + `validate_odcs`) still passed on the hollow block. Its
+  `properties` are now translated; a property that declares no type is exported without a
+  `logicalType` rather than being guessed at.
+- **An unsupported version pin diagnoses itself** (F4). `@1.0` is looked up as a literal
+  `1.0.yaml` and misses `1.0.0.yaml` beside it, and `SchemaNotFound` reported that as a bare
+  "schema missing" — the wrong diagnosis. It now distinguishes a missing schema directory, an
+  absent version, and an unsupported pin form, listing the versions that do exist and
+  suggesting `@1`. The two supported forms (`@MAJOR`, `@MAJOR.MINOR.PATCH`) are documented in
+  the authoring skill. Resolution semantics are unchanged.
+- **`contract lint` prints that diagnosis instead of the bare ref** (F4). It caught
+  `SchemaNotFound` and reprinted only `  - s.tab@1.0`, discarding the message — and CI reaches
+  `lint` long before it reaches `resolve()`, so the surface where a bad pin is actually hit
+  first was the one surface the diagnosis never reached. Each unresolved ref now carries its
+  full reason. Exit code and the `LINT FAILED` header are unchanged.
+- **A forgotten or non-numeric version pin diagnoses itself too** (F4). `int(version)` ran
+  before the diagnosis could, so `s.tab` (no pin at all) and `s.tab@v1` raised a bare
+  `ValueError: invalid literal for int()` — which `lint` does not catch, so it exited 1 with
+  a traceback and **no output at all**: no `LINT FAILED` header, no ref name, no reason. A
+  forgotten pin is the likeliest pin mistake there is and gave the worst message of any of
+  them. Both now raise `SchemaNotFound` naming the supported forms and the versions that
+  exist. Resolution semantics are unchanged: no ref that resolved before resolves differently.
+
+### Changed
+
+- **ODCS export maps `datetime` to `timestamp`, not `date`** (F3). ODCS v3.1's `logicalType`
+  enum carries a distinct `timestamp`, so collapsing both onto `date` dropped the time
+  component and left a consumer unable to tell the two types apart. A consumer diffing ODCS
+  documents will see this change on any schema with a `datetime` field.
+
 ## [0.6.1] — 2026-07-28
 
 ### Fixed

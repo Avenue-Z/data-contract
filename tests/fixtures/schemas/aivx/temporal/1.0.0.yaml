@@ -1,0 +1,13 @@
+# tests/fixtures/schemas/aivx/temporal/1.0.0.yaml
+# A payload with both temporal types — the F2 regression fixture. The tabular path enforces
+# a real datetime dtype; this exists so the payload path is held to the same standard.
+schema: aivx.temporal
+version: 1.0.0
+kind: payload
+fields:
+  - name: day
+    type: date
+    required: true
+  - name: at
+    type: datetime
+    required: true

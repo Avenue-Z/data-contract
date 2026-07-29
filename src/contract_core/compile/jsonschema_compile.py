@@ -25,9 +25,30 @@ def _field_schema(field: Field) -> dict[str, Any]:
     return base
 
 
+# `additionalProperties` consults only its SIBLING `properties`/`patternProperties` — it does
+# not see into a subschema. A schema that declares its properties inside an applicator has an
+# empty sibling set, so `additionalProperties: false` there rejects EVERY key: a valid payload
+# warns as an extra on every run, which is a permanent false positive in the event log that
+# `contract events` gates promotion on. Leaving such a schema open is the pre-F5 behavior —
+# under-enforcing beats poisoning the evidence.
+_APPLICATORS = frozenset({
+    "oneOf", "anyOf", "allOf", "not", "$ref", "if", "then", "else", "dependentSchemas",
+})
+
+
 def to_json_schema(schema: Schema, *, open: bool) -> dict[str, Any]:
     if schema.json_schema is not None:
-        return schema.json_schema
+        if "additionalProperties" in schema.json_schema:
+            # The author of a raw schema owns its openness; `open` only fills a gap.
+            return schema.json_schema
+        if schema.json_schema.keys() & _APPLICATORS:
+            return schema.json_schema
+        # Returning the raw schema verbatim made `open` a no-op, so a raw-`json_schema`
+        # payload never closed on an output boundary and its extra keys never warned —
+        # while a fields-based payload with the same shape did. Copied, not mutated: the
+        # authored dict is the resolved `Schema`'s own state, reused across boundaries in
+        # both directions.
+        return {**schema.json_schema, "additionalProperties": bool(open)}
     assert schema.fields is not None  # non-passthrough schema always has fields (validator)
     props = {f.name: _field_schema(f) for f in schema.fields}
     required = [f.name for f in schema.fields if f.required]

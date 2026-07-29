@@ -79,12 +79,17 @@ def lint(contract_path: str, schema_dirs: tuple[str, ...]) -> None:
     for b in boundaries:
         try:
             resolver.resolve(b.schema_ref)
-        except SchemaNotFound:
-            unresolved.append(b.schema_ref)
+        except SchemaNotFound as exc:
+            # The resolver's message says WHICH of the three ways the ref failed and names
+            # the versions that exist. CI reaches lint long before it reaches resolve(), so
+            # reprinting the bare ref here strands that diagnosis. `.args[0]` rather than
+            # `str(exc)`: SchemaNotFound subclasses KeyError, whose str() is the repr of its
+            # argument — quotes and all. Every message already opens with the ref.
+            unresolved.append(str(exc.args[0]) if exc.args else b.schema_ref)
     if unresolved:
         click.echo("LINT FAILED — unresolved schema refs:")
-        for ref in unresolved:
-            click.echo(f"  - {ref}")
+        for detail in unresolved:
+            click.echo(f"  - {detail}")
         sys.exit(1)
     doc = to_odcs(contract, resolver)
     validate_odcs(doc)
