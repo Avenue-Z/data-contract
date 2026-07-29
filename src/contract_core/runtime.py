@@ -4,7 +4,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pandera.pandas as pa
@@ -21,6 +21,9 @@ from contract_core.events import EventLog, Result
 from contract_core.resolver import Resolver
 from contract_core.schema import Schema
 from contract_core.types import Field as FieldSpec
+
+if TYPE_CHECKING:  # `jsonschema` is imported lazily below; this keeps the annotation honest
+    import jsonschema
 
 # A boundary decorator: wraps a data-producing function, validating its return value.
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
@@ -65,6 +68,58 @@ def _constraint_label(check: str, declared: "FieldSpec | None") -> str:
     value = {"enum": declared.enum, "minimum": declared.minimum,
              "maximum": declared.maximum, "min_length": declared.min_length}[check]
     return f"{check}={value}"
+
+
+@functools.cache
+def _temporal_format_checker() -> "jsonschema.FormatChecker":
+    """A format checker scoped to `date` and `date-time`, and to those only.
+
+    JSON Schema `format` is annotation-only unless the validator is handed a checker, so
+    the `format` the compiler emits for `date`/`datetime` used to assert a check that never
+    ran: `"not-a-date"` passed a payload boundary silently while the tabular path enforced a
+    real datetime dtype.
+
+    Deliberately NOT the default `FormatChecker()`, which would also switch on `email`,
+    `uri`, `ipv4` and the rest: a consumer who authored those in a raw `json_schema` would
+    see payloads that pass today start failing on upgrade. Widening the set is a separate,
+    announced decision.
+
+    `date-time` is backed by `datetime.fromisoformat` rather than the `rfc3339-validator`
+    dependency `jsonschema` looks for — without that package the built-in `date-time` check
+    silently passes everything, and a stdlib parse that rejects garbage is worth more here
+    than strict RFC 3339 conformance. It accepts a few ISO-8601 forms RFC 3339 does not;
+    none of them are the malformed values this exists to catch.
+    """
+    import jsonschema
+    checker = jsonschema.FormatChecker(formats=["date"])
+
+    @checker.checks("date-time", raises=ValueError)
+    def _is_date_time(value: object) -> bool:
+        from datetime import datetime
+        if not isinstance(value, str):
+            return True  # not a string: the `type` keyword already reports it as retyped
+        datetime.fromisoformat(value)
+        return True
+
+    return checker
+
+
+def _wrong_top_level_type(kind: str, data: Any) -> FieldDiff | None:
+    """The diff for a boundary that returned the wrong top-level type, or None if it didn't.
+
+    Runs BEFORE `_validate_tabular`/`_validate_payload`, which reach straight for
+    `.columns`/`.keys()`. Without this guard a forgotten `return` (None) or a producer
+    handing back a dict raised a raw `AttributeError` in *every* mode — including
+    `observe`, whose documented promise is to validate and never fail the job. Reported as
+    a `retyped` diff on the pseudo-field `<return>` so it travels the normal path: logged
+    under observe/warn, a `ContractViolation` under enforce.
+    """
+    expected, ok = (("dataframe", isinstance(data, pd.DataFrame)) if kind == "tabular"
+                    else ("object", isinstance(data, dict)))
+    if ok:
+        return None
+    return FieldDiff(field="<return>", expected=expected,
+                     observed=type(data).__name__, problem="retyped")
 
 
 class ContractRuntime:
@@ -141,7 +196,12 @@ class ContractRuntime:
     def _validate(self, direction: str, spec: BoundarySpec, resolved: Schema,
                   data: Any) -> None:
         is_output = direction == "output"
-        if resolved.kind == "tabular":
+        diffs: list[FieldDiff]
+        observed: dict[str, Any]
+        wrong_type = _wrong_top_level_type(resolved.kind, data)
+        if wrong_type is not None:
+            diffs, observed = [wrong_type], {"type": type(data).__name__}
+        elif resolved.kind == "tabular":
             diffs, observed = self._validate_tabular(resolved, data, is_output)
         else:
             diffs, observed = self._validate_payload(resolved, data, is_output)
@@ -241,7 +301,8 @@ class ContractRuntime:
         observed: dict[str, Any] = {"keys": list(payload.keys())}
         js = to_json_schema(resolved, open=not is_output)
         diffs: list[FieldDiff] = []
-        validator = jsonschema.Draft202012Validator(js)
+        validator = jsonschema.Draft202012Validator(
+            js, format_checker=_temporal_format_checker())
         for err in validator.iter_errors(payload):
             if err.validator == "required":
                 # message: "'x' is a required property"
@@ -252,7 +313,7 @@ class ContractRuntime:
                 field = str(err.path[-1])
                 diffs.append(FieldDiff(field=field, expected=str(err.validator_value),
                                        observed=type(err.instance).__name__, problem="retyped"))
-            elif err.validator in ("enum", "minimum", "maximum", "minLength"):
+            elif err.validator in ("enum", "minimum", "maximum", "minLength", "format"):
                 # Design §5.3: without this branch a jsonschema value error matches no
                 # branch and is dropped, so constraints compile into the payload schema
                 # and then do nothing.
@@ -261,11 +322,18 @@ class ContractRuntime:
                 # name to a set of field names, and one name for two types is a mypy error.
                 declared_field = next(
                     (f for f in (resolved.fields or []) if f.name == field), None)
-                key = {"minLength": "min_length"}.get(str(err.validator), str(err.validator))
+                if err.validator == "format":
+                    # `format` is derived from the declared type, not authored as a Field
+                    # attribute, so it has no slot in `_constraint_label`'s lookup.
+                    constraint = f"format={err.validator_value}"
+                else:
+                    key = {"minLength": "min_length"}.get(
+                        str(err.validator), str(err.validator))
+                    constraint = _constraint_label(key, declared_field)
                 diffs.append(FieldDiff(
                     field=field, expected=str(declared_field.type) if declared_field else "?",
                     observed=type(err.instance).__name__, problem="value",
-                    constraint=_constraint_label(key, declared_field),
+                    constraint=constraint,
                     violating_rows=None, samples=[str(err.instance)],
                 ))
             elif err.validator == "additionalProperties" and is_output:

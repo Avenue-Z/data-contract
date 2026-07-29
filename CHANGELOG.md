@@ -11,6 +11,52 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+Closes the six findings from the v0.6.1 code review
+(`docs/notes/2026-07-28-code-review-v0.6.1.md`). Two of them tighten validation, so a payload
+that passes today can become a violation on this pin — read **Fixed** before moving it.
+
+### Fixed
+
+- **A wrong-type return no longer crashes the job in `observe`/`warn`** (F1). The validators
+  reached straight for `.columns`/`.keys()`, so a decorated function returning `None` (a
+  forgotten `return`), a `dict` where a DataFrame was declared, or a `list` where an object
+  was raised a raw `AttributeError` in **every** mode — including `observe`, whose documented
+  promise is to validate and never fail the job, and which is the adoption on-ramp. A wrong
+  top-level type is now a `retyped` diff on the pseudo-field `<return>`: logged under
+  `observe`/`warn`, a `ContractViolation` under `enforce`.
+- **Payload `date`/`datetime` fields are value-checked** (F2). They compiled to a JSON Schema
+  `format`, which is annotation-only unless the validator is handed a format checker — so
+  `"not-a-date"` passed a payload boundary silently while the tabular path enforced a real
+  datetime dtype. **Behavior change:** a payload with a malformed temporal value is now a
+  `value` violation, and hard-fails under `enforce`. Checking is scoped to `date` and
+  `date-time` only; `email`, `uri` and the rest stay annotation-only, so a raw `json_schema`
+  that declares them is unaffected. No new dependency — `date-time` is backed by
+  `datetime.fromisoformat`.
+- **A raw `json_schema` payload closes on an output boundary** (F5). It was returned verbatim
+  with the `open` argument ignored, so `additionalProperties` was absent, extras were allowed,
+  and an undeclared output key never warned — while a `fields` payload of the same shape did.
+  The direction now fills `additionalProperties` **only when the authored schema does not set
+  it**; an author who pins it still wins. **Behavior change:** an extra key on such an output
+  now logs `warn` instead of `pass` (it still never raises).
+- **A raw `json_schema` payload exports its shape to ODCS** (F6). `_schema_block` walked only
+  `fields`, so it exported as a named table with no properties — the shape silently dropped,
+  while `lint` (`to_odcs` + `validate_odcs`) still passed on the hollow block. Its
+  `properties` are now translated; a property that declares no type is exported without a
+  `logicalType` rather than being guessed at.
+- **An unsupported version pin diagnoses itself** (F4). `@1.0` is looked up as a literal
+  `1.0.yaml` and misses `1.0.0.yaml` beside it, and `SchemaNotFound` reported that as a bare
+  "schema missing" — the wrong diagnosis. It now distinguishes a missing schema directory, an
+  absent version, and an unsupported pin form, listing the versions that do exist and
+  suggesting `@1`. The two supported forms (`@MAJOR`, `@MAJOR.MINOR.PATCH`) are documented in
+  the authoring skill. Resolution semantics are unchanged.
+
+### Changed
+
+- **ODCS export maps `datetime` to `timestamp`, not `date`** (F3). ODCS v3.1's `logicalType`
+  enum carries a distinct `timestamp`, so collapsing both onto `date` dropped the time
+  component and left a consumer unable to tell the two types apart. A consumer diffing ODCS
+  documents will see this change on any schema with a `datetime` field.
+
 ## [0.6.1] — 2026-07-28
 
 ### Fixed

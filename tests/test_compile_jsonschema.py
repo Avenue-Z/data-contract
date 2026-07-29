@@ -1,4 +1,6 @@
 # tests/test_compile_jsonschema.py
+import pytest
+
 from contract_core.compile.jsonschema_compile import to_json_schema
 from contract_core.schema import Schema
 
@@ -26,13 +28,53 @@ def test_closed_payload_forbids_additional_properties():
     assert js["additionalProperties"] is False
 
 
-def test_passthrough_returns_authored_json_schema():
+def test_passthrough_returns_the_authored_json_schema_body():
+    # The raw body is carried through as authored, never recompiled from `fields`. Since F5
+    # the compiler also fills `additionalProperties` when the author left it unset — that is
+    # the ONLY key it may add, which is what the exact-equality below pins.
     authored = {"type": "object", "properties": {"a": {"type": "string"}}}
     s = Schema.model_validate({
         "schema": "x.y", "version": "1.0.0", "kind": "payload",
         "json_schema": authored,
     })
-    assert to_json_schema(s, open=True) == authored
+    assert to_json_schema(s, open=True) == {**authored, "additionalProperties": True}
+
+
+# ---- passthrough openness (F5) ----
+#
+# A fields-based payload gets `additionalProperties: false` on an output boundary, so an
+# extra key surfaces as a warn. A raw json_schema was returned verbatim with `open` ignored,
+# so two payload schemas that behave identically on inputs diverged on outputs.
+
+
+def _raw(**extra):
+    return Schema.model_validate({
+        "schema": "x.y", "version": "1.0.0", "kind": "payload",
+        "json_schema": {"type": "object",
+                        "properties": {"a": {"type": "string"}}, **extra},
+    })
+
+
+def test_passthrough_closes_on_output_when_the_author_did_not_pin_it():
+    assert to_json_schema(_raw(), open=False)["additionalProperties"] is False
+
+
+def test_passthrough_opens_on_input_when_the_author_did_not_pin_it():
+    assert to_json_schema(_raw(), open=True)["additionalProperties"] is True
+
+
+@pytest.mark.parametrize("pinned", [True, False, {"type": "string"}])
+def test_an_authored_additional_properties_wins_over_open(pinned):
+    # The author of a raw schema owns its openness. `open` only fills a gap.
+    s = _raw(additionalProperties=pinned)
+    assert to_json_schema(s, open=True)["additionalProperties"] == pinned
+    assert to_json_schema(s, open=False)["additionalProperties"] == pinned
+
+
+def test_passthrough_does_not_mutate_the_authored_schema():
+    s = _raw()
+    to_json_schema(s, open=False)
+    assert "additionalProperties" not in s.json_schema
 
 
 # ---- value constraints (design §5.1) ----

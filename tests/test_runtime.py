@@ -180,3 +180,151 @@ def test_output_extra_field_warns_not_raises(tmp_path):
 
     produce()  # extra field must NOT raise
     assert log.records()[-1]["result"] == "warn"
+
+
+# ---- wrong-type returns (F1) ----
+#
+# observe is the adoption on-ramp and is documented as "never fail the job", so a forgotten
+# `return` (None) or a producer handing back a dict must log, not crash. Before the guard,
+# `_validate_tabular`/`_validate_payload` reached for `.columns`/`.keys()` and raised a raw
+# AttributeError in EVERY mode.
+
+
+@pytest.mark.parametrize("bad", [None, {"a": 1}, [1, 2], "text"])
+def test_tabular_wrong_type_return_does_not_crash_observe(tmp_path, bad):
+    rt, log = _runtime(tmp_path, mode="observe")
+
+    @rt.input("prompts")
+    def load():
+        return bad
+
+    assert load() is bad  # the job survives and its value passes through untouched
+    rec = log.records()[-1]
+    assert rec["result"] == "violation"
+    assert rec["observed_shape"] == {"type": type(bad).__name__}
+
+
+def test_tabular_wrong_type_return_raises_contract_violation_under_enforce(tmp_path):
+    rt, _ = _runtime(tmp_path, mode="enforce")
+
+    @rt.input("prompts")
+    def load():
+        return None
+
+    with pytest.raises(ContractViolation) as ei:
+        load()
+    diff = ei.value.diffs[0]
+    assert (diff.field, diff.problem) == ("<return>", "retyped")
+    assert (diff.expected, diff.observed) == ("dataframe", "NoneType")
+
+
+@pytest.mark.parametrize("bad", [None, [1, 2], "text", 42])
+def test_payload_wrong_type_return_does_not_crash_observe(tmp_path, bad):
+    rt, log = _payload_runtime(tmp_path, mode="observe")
+
+    @rt.output("report")
+    def produce():
+        return bad
+
+    assert produce() is bad
+    assert log.records()[-1]["result"] == "violation"
+
+
+def test_payload_wrong_type_return_raises_contract_violation_under_enforce(tmp_path):
+    rt, _ = _payload_runtime(tmp_path, mode="enforce")
+
+    @rt.output("report")
+    def produce():
+        return [1, 2]
+
+    with pytest.raises(ContractViolation) as ei:
+        produce()
+    diff = ei.value.diffs[0]
+    assert (diff.field, diff.problem) == ("<return>", "retyped")
+    assert (diff.expected, diff.observed) == ("object", "list")
+
+
+# ---- payload temporal values (F2) ----
+#
+# `date`/`datetime` compile to `format`, and JSON Schema `format` is annotation-only unless
+# the validator is given a format checker — so "not-a-date" used to pass a payload boundary
+# silently, asymmetric with the tabular path's real datetime dtype.
+
+
+def _temporal_runtime(tmp_path, mode="enforce"):
+    contract = Contract.model_validate({
+        "system": "demo", "version": "1.0.0",
+        "outputs": [{"name": "stamped", "schema": "aivx.temporal@1.0.0", "mode": mode}],
+    })
+    log = EventLog(tmp_path / "e.jsonl")
+    return ContractRuntime(contract, Resolver([FIX / "schemas"]), event_log=log,
+                           clock=lambda: "2026-07-16T00:00:00+00:00"), log
+
+
+def test_payload_valid_temporal_values_pass(tmp_path):
+    rt, log = _temporal_runtime(tmp_path)
+
+    @rt.output("stamped")
+    def produce():
+        return {"day": "2026-07-16", "at": "2026-07-16T09:30:00Z"}
+
+    produce()
+    assert log.records()[-1]["result"] == "pass"
+
+
+@pytest.mark.parametrize("field,payload", [
+    ("day", {"day": "not-a-date", "at": "2026-07-16T09:30:00Z"}),
+    ("at", {"day": "2026-07-16", "at": "also-not-a-datetime"}),
+])
+def test_payload_malformed_temporal_value_is_a_violation(tmp_path, field, payload):
+    rt, _ = _temporal_runtime(tmp_path)
+
+    @rt.output("stamped")
+    def produce():
+        return payload
+
+    with pytest.raises(ContractViolation) as ei:
+        produce()
+    diff = ei.value.diffs[0]
+    assert (diff.field, diff.problem) == (field, "value")
+    assert diff.constraint == f"format={'date' if field == 'day' else 'date-time'}"
+
+
+# ---- raw `json_schema` payloads on a closed output (F5) ----
+
+
+def _raw_payload_runtime(tmp_path, mode="enforce"):
+    contract = Contract.model_validate({
+        "system": "demo", "version": "1.0.0",
+        "outputs": [{"name": "raw_out", "schema": "aivx.raw@1.0.0", "mode": mode}],
+        "inputs": [{"name": "raw_in", "schema": "aivx.raw@1.0.0", "mode": mode}],
+    })
+    log = EventLog(tmp_path / "e.jsonl")
+    return ContractRuntime(contract, Resolver([FIX / "schemas"]), event_log=log,
+                           clock=lambda: "2026-07-16T00:00:00+00:00"), log
+
+
+def test_raw_json_schema_payload_extra_key_warns_on_output(tmp_path):
+    # A fields-based payload already warns here. `to_json_schema` returned a raw schema
+    # verbatim and ignored `open`, so `additionalProperties` was absent, extras were
+    # allowed, and no warn ever fired.
+    rt, log = _raw_payload_runtime(tmp_path)
+
+    @rt.output("raw_out")
+    def produce():
+        return {"slug": "x", "debug_note": "hi"}
+
+    produce()  # extras on an output warn, they never raise
+    rec = log.records()[-1]
+    assert rec["result"] == "warn"
+
+
+def test_raw_json_schema_payload_extra_key_passes_on_input(tmp_path):
+    rt, log = _raw_payload_runtime(tmp_path)
+
+    @rt.input("raw_in")
+    def load():
+        return {"slug": "x", "vendor_surprise": 1}
+
+    load()
+    assert log.records()[-1]["result"] == "pass"

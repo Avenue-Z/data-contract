@@ -1,0 +1,14 @@
+# tests/fixtures/schemas/aivx/raw/1.0.0.yaml
+# A payload authored as a raw `json_schema` rather than as `fields` — the F5/F6 fixture.
+# It deliberately pins no `additionalProperties`, which is the case where the boundary's
+# direction (open input / closed output) has to fill the gap.
+schema: aivx.raw
+version: 1.0.0
+kind: payload
+json_schema:
+  type: object
+  properties:
+    slug:
+      type: string
+  required:
+    - slug
