@@ -36,8 +36,8 @@ on:
     secrets:
       contract-core-token:
         description: "Optional. data-contract is public, so this is unnecessary for a normal
-          clone — pass it only if your org's policy still requires an explicit token for
-          cross-repo Actions access."
+          clone — pass it only if your org's policy requires an explicit credential for
+          pip's clone of this dependency."
         required: false
 
 # Least privilege: this job reads code and reports a result; it never writes to the repo.
@@ -48,17 +48,6 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      # 0. When a token IS supplied, fail fast with a readable message if it's somehow empty —
-      #    BEFORE any step consumes it. data-contract is public, so no token is required at all
-      #    (P1, 2026-07-30); this step is a no-op when the caller passes none.
-      - name: Require the contract-core token, if one was supplied
-        if: ${{ secrets.contract-core-token != '' }}
-        env:
-          CONTRACT_CORE_TOKEN: ${{ secrets.contract-core-token }}
-        run: |
-          set -euo pipefail
-          [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::contract-core-token is empty"; exit 1; }
-
       # 1. The CALLER's repo — the contract + package the gate runs against.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -84,17 +73,21 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
 
-      # 4. Authenticate pip's clone of the private contract-core dependency — and NOTHING else.
+      # 4. Authenticate pip's clone of the contract-core dependency — and NOTHING else.
       #    The `.git` suffix scopes the rewrite to THIS repo: git's insteadOf is longest-PREFIX,
       #    so a bare match on `.../data-contract` also credentials sibling clones like
       #    `.../data-contract-secrets`. Matching `.../data-contract.git` ends at the repo boundary
-      #    — which is why the consumer pin MUST be the `.git@<ref>` form (see consuming-repo-setup §1).
-      - name: Configure git auth for the private dependency, if a token was supplied
-        if: ${{ secrets.contract-core-token != '' }}
+      #    — which is why a consumer that does pass a token should pin the `.git@<ref>` form (see
+      #    consuming-repo-setup §1).
+      - name: Configure git auth for the contract-core dependency, if a token was supplied
         env:
           CONTRACT_CORE_TOKEN: ${{ secrets.contract-core-token }}
         run: |
           set -euo pipefail
+          if [ -z "${CONTRACT_CORE_TOKEN:-}" ]; then
+            echo "No contract-core-token supplied — data-contract is public, skipping git auth."
+            exit 0
+          fi
           git config --global \
             url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
             "https://github.com/Avenue-Z/data-contract.git"
