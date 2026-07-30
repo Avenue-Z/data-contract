@@ -89,6 +89,11 @@ def test_platform_with_a_hyphen_is_accepted():
     assert "schema: foo-bar.records@1" in result.contract_target.content
 
 
+def test_empty_platform_is_rejected_before_anything_is_planned():
+    with pytest.raises(PlanError):
+        plan(_fresh_spec(platform=""), existing_paths=set())
+
+
 def test_existing_targets_are_reported_skipped_not_overwritten():
     existing = {Path("contract.yaml"), Path("src/my_pkg/boundaries.py")}
     result = plan(_fresh_spec(), existing_paths=existing)

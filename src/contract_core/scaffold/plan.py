@@ -76,6 +76,8 @@ class Plan:
 
 
 def _validate_platform(platform: str) -> None:
+    if not platform:
+        raise PlanError("--platform must be a non-empty string of letters, digits, '_' and '-'")
     for ch in platform:
         if not _PLATFORM_RE.fullmatch(ch):
             raise PlanError(
