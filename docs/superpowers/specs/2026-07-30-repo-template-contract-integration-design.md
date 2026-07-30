@@ -3,8 +3,17 @@
 **Status:** ready to execute once `contract init` ships. Not blocked on specification.
 
 **Depends on:** `docs/superpowers/specs/2026-07-30-contract-init-design.md` (branch
-`docs/contract-init-spec` @ `82f8399`, status *Draft — in review*), and on the `data-contract`
+`docs/contract-init-spec` @ `b81786f`, status *Draft — in review*), and on the `data-contract`
 visibility decision (§1.3).
+
+**Dependency status, verified 2026-07-30:**
+
+| Dependency | State |
+| --- | --- |
+| `contract init` implementation | **Not started.** No `src/contract_core/scaffold/`; `cli.py` still registers only `lint`/`reconcile`/`events`. Its implementation plan exists but is *untracked* on disk. |
+| `contract init` design | Revised twice since this plan was drafted (`82f8399` → `6fc0c72` → `b81786f`); still *Draft — in review*. Every section number cited below survives. |
+| P1 — gate stops requiring a read token | **Implemented**, four commits on `origin/fix/contract-gate-retire-token` @ `d023092`. Not merged to `dev`. |
+| Visibility decision | Still open. |
 
 **The design in one sentence:** `repo-template` ships **documentation and one inert beacon, and
 scaffolds nothing**. `contract init` owns the entire scaffold, run by the adopter in the finished
@@ -28,26 +37,74 @@ true: the design exists and answers every question this plan needed.
 | `pyproject.toml` edits | init §8 — the `raw_drift` marker, behind a guard ladder. init §4.7 — the `contract-core` **dependency pin is printed, not written**. |
 | CI workflow and tag | init §4.5 — emitted with `@v{contract_core.__version__}` substituted for the placeholder. |
 
-**What remains open is "shipped," not "specified."** The command is unbuilt and its design is still in
-review. This plan is therefore executable-when-unblocked, and its §6 test suite cannot run until the
-command exists.
+**What remains open is "shipped," not "specified."** Verified on `2026-07-30`, and stated with the
+evidence because it is the gate on everything below:
 
-### 1.2 P1 — the gate stops requiring a read token
+- `src/contract_core/scaffold/` does not exist on any ref, on any branch, or in any working tree.
+- `src/contract_core/cli.py` still registers exactly `lint` (`:52`), `reconcile` (`:104`) and
+  `events` (`:129`). There is no `init`.
+- `docs/superpowers/plans/2026-07-30-contract-init.md` exists but is **untracked** — the
+  implementation plan is written, not committed, and not executed. Its own Global Constraints make
+  it P1-dependent.
 
-init §12 sequences a prerequisite ahead of itself: `contract-gate.yml` drops the mandatory
-`contract-core-token`, and `consuming-repo-setup.md` §1/§7 lose the "private, so your CI needs read
-access" prerequisite. Everything this plan writes assumes P1 has landed. If it has not, the
-documentation in §5 would teach a token requirement that is about to disappear.
+So this plan stays executable-when-unblocked, and its §6 suite cannot run until the command exists.
+
+**Revisions since this plan was drafted.** The design moved `82f8399` → `b81786f` across two
+commits ("fix wrong citations, the missing contract version, template linting"; "validate
+`--platform`, resolve the §7/§8 inconsistency, pin gap-fill"). Every section this plan cites still
+exists and still says what is quoted. One change is adopter-facing and is folded into §5:
+
+**init §2.1.1 — `--platform` must match `[A-Za-z0-9_-]+`.** A value containing `.` or `/` is
+rejected before anything is written. The reason is not hygiene: the resolver builds a schema's
+directory from the *entire* dotted ref (`resolver.py:51-52`), so `--platform google.ads` would write
+`schemas/google.ads/records/` while emitting the ref `google.ads.records@1`, which expands to a
+three-segment lookup against a two-segment tree — `contract lint` then fails on freshly generated
+output. A vendor-shaped platform name is the obvious thing to type, so the documentation this plan
+writes must say hyphens and underscores only.
+
+The rest of the revision is internal to `contract-core` and does not reach this plan: init §4.0
+(the generated contract carries `version: 0.1.0`), §5.1 (which schema file a gap-fill writes, and
+when it declines), §7 (refuses when both package layouts exist), §9.1 (templates carry `.tmpl` so
+`ruff`/`mypy` never sweep them).
+
+### 1.2 P1 — implemented, awaiting merge
+
+init §12 sequenced this ahead of `contract init`, and it is the one dependency that is **built**:
+four commits on `origin/fix/contract-gate-retire-token` @ `d023092`, touching
+`.github/workflows/contract-gate.yml`, `CHANGELOG.md`, `docs/consuming-repo-setup.md` and
+`skills/authoring-data-contracts/references/templates/ci-gate.yml`. Not yet merged to `dev`.
+
+As built, matching the spec and going one step past it:
+
+- `secrets.contract-core-token` is `required: false`, described as unnecessary for a normal clone.
+- Step 0, the hard-fail-on-empty-token guard, is deleted.
+- Step 2's `actions/checkout` of `Avenue-Z/data-contract` no longer passes `token:` — it reads the
+  repo unauthenticated.
+- Step 4 exits early with a message when no token is supplied, and when one *is* supplied it now
+  validates it with `git ls-remote` rather than letting a typo'd secret surface as an opaque git
+  error inside pip's install log. That validation is not in the spec; it is a correct addition.
+- The skill's `ci-gate.yml` teaching template drops its `secrets:` block and its "three things must
+  line up" third item.
+
+This plan's §5 prose already teaches a tokenless install, so it is consistent with P1 as built. It
+must not land before P1 merges, or it would document a gate whose `dev` version still hard-fails on
+an empty token.
 
 ### 1.3 The visibility decision — now coupled across two specs
 
 `Avenue-Z/data-contract` is currently **public** (`gh repo view` → `"visibility": "PUBLIC"`). Per the
 brief, that state is under review.
 
-This is no longer an independent question on the template's side. init §12 P1 *bets on public* — it
-retires the token on exactly that ground — and init §10 adds a test asserting the generated workflow
-contains **no `secrets:` block**. So a flip to private reverts P1, inverts that test, and puts a
-per-repo secret back into the adoption path this plan documents as tokenless.
+This is no longer an independent question on the template's side, and P1 having shipped sharpens it
+rather than settling it. P1 *bets on public*, and init §10 adds a test asserting the generated
+workflow contains **no `secrets:` block**.
+
+The sharp edge is step 2. `contract-gate.yml` now checks out `Avenue-Z/data-contract` with the
+default `GITHUB_TOKEN`, which cannot read another private repo. So under a flip to private the gate
+breaks **regardless of whether the consumer passes `contract-core-token`** — the optional secret
+only ever governed pip's clone (step 4), never the workflow's own checkout of its expander scripts.
+A flip therefore means reverting step 2, re-requiring the secret, inverting init §10's test, and
+putting a per-repo credential back into the adoption path this plan documents as tokenless.
 
 The template's own exposure is now small, because it scaffolds nothing: the change would be to a
 paragraph of documentation, not to a generated file. That is a direct benefit of dropping the flag
@@ -166,6 +223,9 @@ So the beacon is a pointer, not a template:
 #     pip install "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@<tag>"
 #     contract init --system <name> --platform <platform> --source <api|mcp|llm|file>
 #
+# --platform takes letters, digits, hyphens and underscores only. NOT a dotted vendor name:
+# `google-ads`, not `google.ads` — a dot makes the generated schema refs unresolvable.
+#
 # That writes .github/workflows/contract.yml with the correct pinned tag, plus contract.yaml,
 # the schemas, the boundary wiring and a drift test. Delete this file once it has.
 #
@@ -197,6 +257,10 @@ ships to python repos.
 >
 >     pip install "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@<tag>"
 >     contract init --system <name> --platform <platform> --source <api|mcp|llm|file>
+>
+> `--platform` takes letters, digits, hyphens and underscores only — `google-ads`, **not**
+> `google.ads`. A dot is a segment separator in a schema ref, so a dotted platform generates refs
+> that will not resolve against the tree it just wrote.
 >
 > `contract init` writes `contract.yaml`, the schema tree, the boundary wiring, a drift test and the
 > CI workflow. It is a **retrofit** command — run it once this repo's package has its real name, not
@@ -245,9 +309,14 @@ not a numbered step, because numbering it would imply a day-one action.
 >     pip install "contract-core @ git+https://github.com/Avenue-Z/data-contract.git@<tag>"
 >     contract init --system <name> --platform <platform> --source <api|mcp|llm|file>
 >
+> `--platform` takes letters, digits, hyphens and underscores only — `google-ads`, **not**
+> `google.ads`. A dot separates segments in a schema ref, so a dotted platform generates refs that
+> will not resolve against the tree `init` just wrote. It refuses one rather than writing it.
+>
 > It writes `contract.yaml`, the schema tree, `boundaries.py`, a drift test and the CI workflow, and
 > registers the `raw_drift` pytest marker. It prints — rather than writes — the `contract-core`
-> dependency pin; add that line to `pyproject.toml` yourself.
+> dependency pin; add that line to `pyproject.toml` yourself. No read token is needed:
+> `data-contract` is public.
 >
 > **Python only.** `contract-core` is pandera/pandas and the gate needs an importable Python package.
 > There is no node or next path; a non-Python repo that needs a contract should move the external read
@@ -322,6 +391,9 @@ assert_match "README documents data contracts"        '## Data contracts' "$read
 assert_match "README routes to contract init"         'contract init'     "$readme"
 assert_match "README states the python-only limit"    'Python only'       "$readme"
 assert_match "README names the 3.13 requirement"      '3\.13'             "$readme"
+# init §2.1.1 rejects a dotted --platform. `google.ads` is the obvious thing to type, so the
+# docs must say so before the adopter hits a refusal.
+assert_match "README warns against a dotted --platform" 'google\.ads'     "$readme"
 assert_match "CLAUDE.md carries the contracts rule"   'contract init'     "$(cat CLAUDE.md)"
 
 # --- node: the beacon must NOT ship ---
@@ -420,7 +492,10 @@ is unverified prose.
 
 ## 9. Execution order
 
-1. **Wait on** `contract init` leaving review, P1 landing (§1.2), and the visibility decision (§1.3).
+1. **Wait on**, in this order: P1 merging to `dev` (§1.2 — built, unmerged); the visibility decision
+   (§1.3); `contract init` leaving review **and being implemented and released** (§1.1 — the docs
+   this plan writes name a tag, and §7.2's verification runs the command). None of the three is
+   satisfied today.
 2. `docs/*` branch off `dev` in `Avenue-Z/repo-template`. Add the beacon; edit `README.repo.tmpl`,
    `CLAUDE.md`, `docs/ADOPTION.md`; add `template-tests/test_contracts_docs.sh`.
 3. Run the full suite locally — `for t in template-tests/test_*.sh; do bash "$t"; done` — and read the
@@ -433,13 +508,21 @@ is unverified prose.
 
 ## Appendix — evidence index
 
-Claims below were verified directly. `repo-template` citations are against `6df4f21`; `data-contract`
-citations against `dev` (`53c77a4`) except the init spec, which is `docs/contract-init-spec` @
-`82f8399`.
+Claims below were verified directly on `2026-07-30`. `repo-template` citations are against
+`6df4f21`; `data-contract` citations against `dev` (`53c77a4`) except the init spec
+(`docs/contract-init-spec` @ `b81786f`) and P1 (`origin/fix/contract-gate-retire-token` @ `d023092`).
 
 | Claim | Source |
 | --- | --- |
 | CLI has `lint`/`reconcile`/`events`, no `init` | `src/contract_core/cli.py:43-169` |
+| No `scaffold` package exists on any ref or worktree | `git ls-tree -r` over every ref; `ls src/contract_core/` |
+| The init implementation plan is untracked | `git status --short` → `?? docs/superpowers/plans/2026-07-30-contract-init.md` |
+| Init spec revised twice, still Draft | `git log docs/contract-init-spec` → `82f8399`, `6fc0c72`, `b81786f`; line 4 |
+| `--platform` must be `[A-Za-z0-9_-]+` | init spec §2.1.1 |
+| Resolver splits the whole dotted ref | `src/contract_core/resolver.py:51-52`, quoted in init §2.1.1 |
+| P1 is implemented, unmerged | `origin/fix/contract-gate-retire-token` @ `d023092`; `git diff origin/dev...` = 4 files |
+| P1 makes the secret optional and validates a supplied one | `.github/workflows/contract-gate.yml` on that branch, steps 2 and 4 |
+| Step 2 checks out `data-contract` unauthenticated | same file — `token:` removed from the `actions/checkout` |
 | `reconcile` needs an importable package | `src/contract_core/cli.py:101` |
 | `contract-core` requires 3.13 | `pyproject.toml:9` |
 | init entry state / success criterion | init spec §1.1 |
