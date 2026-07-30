@@ -11,6 +11,14 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+### Changed
+
+- **The reusable CI gate no longer requires a `contract-core-token`** secret. `data-contract` is a
+  public repo, so the read token that authenticated a private clone was dead weight — anonymous
+  clone already works, and the gate's `actions/checkout` of this repo now uses the default
+  `GITHUB_TOKEN`. Passing `contract-core-token` still works unchanged (the secret is now optional,
+  not removed), so no caller needs to change anything to stay green.
+
 ## [0.7.0] — 2026-07-29
 
 Closes the six findings from the v0.6.1 code review
