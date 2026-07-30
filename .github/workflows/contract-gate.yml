@@ -35,8 +35,10 @@ on:
         type: string
     secrets:
       contract-core-token:
-        description: "Token with contents:read on Avenue-Z/data-contract, for pip's private clone."
-        required: true
+        description: "Optional. data-contract is public, so this is unnecessary for a normal
+          clone — pass it only if your org's policy still requires an explicit token for
+          cross-repo Actions access."
+        required: false
 
 # Least privilege: this job reads code and reports a result; it never writes to the repo.
 permissions:
@@ -46,11 +48,11 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      # 0. Fail fast with a readable message on an empty token — BEFORE any step consumes it.
-      #    The private checkout (step 2) and pip's clone (step 5) both need this secret; an empty
-      #    one (the fork-PR case) would otherwise die inside checkout with an opaque
-      #    "could not read from remote repository" and bury the real cause.
-      - name: Require the contract-core token
+      # 0. When a token IS supplied, fail fast with a readable message if it's somehow empty —
+      #    BEFORE any step consumes it. data-contract is public, so no token is required at all
+      #    (P1, 2026-07-30); this step is a no-op when the caller passes none.
+      - name: Require the contract-core token, if one was supplied
+        if: ${{ secrets.contract-core-token != '' }}
         env:
           CONTRACT_CORE_TOKEN: ${{ secrets.contract-core-token }}
         run: |
@@ -74,7 +76,6 @@ jobs:
         with:
           repository: Avenue-Z/data-contract
           ref: ${{ steps.ref.outputs.ref }}
-          token: ${{ secrets.contract-core-token }}
           path: .contract-core
           persist-credentials: false
 
@@ -88,7 +89,8 @@ jobs:
       #    so a bare match on `.../data-contract` also credentials sibling clones like
       #    `.../data-contract-secrets`. Matching `.../data-contract.git` ends at the repo boundary
       #    — which is why the consumer pin MUST be the `.git@<ref>` form (see consuming-repo-setup §1).
-      - name: Configure git auth for the private dependency
+      - name: Configure git auth for the private dependency, if a token was supplied
+        if: ${{ secrets.contract-core-token != '' }}
         env:
           CONTRACT_CORE_TOKEN: ${{ secrets.contract-core-token }}
         run: |
