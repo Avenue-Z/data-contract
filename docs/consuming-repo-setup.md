@@ -18,14 +18,8 @@ or above the release that introduced the gate — see the same-tag rule in §7.
 Your lockfile captures the exact resolved commit — the same pin-by-tag / lock-the-exact-version
 discipline we apply to contracts themselves.
 
-**Keep the `.git` suffix.** The `reconcile` gate (§6–§7) scopes its read token to exactly this repo
-by rewriting the `.git` clone URL; a bare `.../data-contract@<tag>` pin would clone unauthenticated
-and fail. It is the canonical `pip` VCS form regardless, so use it everywhere.
-
-**Prerequisite, not a footnote:** `data-contract` is private, so your CI needs read access to it —
-a deploy key or a token with `contents: read` on `Avenue-Z/data-contract`. This is the one
-operational cost of the git-tag approach. A missing token shows up as a `pip` clone failure at
-install time, not as anything contract-shaped.
+**Keep the `.git` suffix.** It is the canonical `pip` VCS form for a git-ref dependency — use it
+everywhere, whether or not you also pass an access token to the gate (§7).
 
 **Versioning:** `contract-core` is pre-1.0. Under 0.x semantics a **minor** bump may carry breaking
 changes to the authored format or the API. Read the release notes — [`CHANGELOG.md`](../CHANGELOG.md),
@@ -219,13 +213,6 @@ repo running real drift tests cannot do.
 `contract lint` + `contract reconcile` only protect you if CI runs them on every PR. This repo ships
 a reusable workflow that does exactly that.
 
-**Prerequisite, not a footnote:** `data-contract` is private, so a reusable workflow it hosts is
-invisible to your repo until an admin enables, once, **Settings → Actions → General → Access →
-"Accessible from repositories in the 'Avenue-Z' organization"** on `data-contract`. A `workflow was not
-found` error means *that setting is off* — it is **not** the `contract-core-token`, which only clones
-the dependency. If the setting cannot be enabled, use the inline alternative below; it calls nothing
-cross-repo.
-
 **Pin the same tag you pin contract-core to.** The workflow ships the CLI flag names at its tag,
 while your `pyproject.toml` (§1) pins the CLI it drives, and a 0.x minor may change that surface (read
 [`CHANGELOG.md`](../CHANGELOG.md)). So the workflow `@tag` and your contract-core pin **must be the
@@ -253,9 +240,10 @@ jobs:
         schemas
       tests: |                     # one path per line
         tests
-    secrets:
-      # A token/deploy key with contents:read on Avenue-Z/data-contract (§1).
-      contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
+    # Optional — data-contract is public, so most callers omit this. Pass it only if your org's
+    # policy requires an explicit credential for pip's clone of this dependency (see §1).
+    # secrets:
+    #   contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
 ```
 
 `schemas` and `tests` are **newline-delimited** — one path per line under a `|` block. Blank and
@@ -275,8 +263,8 @@ you run your drift tests as collected pytest tests under `--strict-markers`, reg
 
 ### Inline alternative (no cross-repo call)
 
-If you would rather not depend on the reusable workflow — or cannot enable the Actions-access setting
-above — run the two commands directly. Pin the marketplace actions to your repo's policy.
+If you would rather not depend on the reusable workflow, run the two commands directly. Pin the
+marketplace actions to your repo's policy.
 
 ```yaml
 jobs:
@@ -288,14 +276,17 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install and run the gate
+        # CONTRACT_CORE_READ_TOKEN is optional — data-contract is public. Set it only if your
+        # org's policy requires an explicit credential for pip's clone of this dependency.
         env:
           CONTRACT_CORE_TOKEN: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
         run: |
           set -euo pipefail
-          [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::CONTRACT_CORE_READ_TOKEN is empty"; exit 1; }
-          git config --global \
-            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
-            "https://github.com/Avenue-Z/data-contract.git"
+          if [ -n "${CONTRACT_CORE_TOKEN:-}" ]; then
+            git config --global \
+              url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
+              "https://github.com/Avenue-Z/data-contract.git"
+          fi
           pip install .
           contract lint --contract contract.yaml --schemas schemas
           contract reconcile --contract contract.yaml --package my_pkg --tests tests
@@ -378,5 +369,5 @@ Until then, run `observe` where the evidence survives: locally and in CI.
 
 ---
 
-*When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin + deploy token), §3 (the
-kill switch) and §4 (the absent-library pattern) — that skill is the eventual home for all three.*
+*When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin), §3 (the kill switch)
+and §4 (the absent-library pattern) — that skill is the eventual home for all three.*
