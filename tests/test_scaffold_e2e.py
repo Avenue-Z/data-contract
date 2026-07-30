@@ -60,6 +60,26 @@ def test_rerun_is_a_fixed_point(tmp_path):
     assert "read      contract.yaml" in second.stdout
 
 
+def test_gap_fill_refuses_a_multi_input_contract_and_writes_nothing(tmp_path):
+    """A hand-authored contract with two inputs can't be faithfully turned into a single-stanza
+    boundaries.py. `init` must refuse before writing (design §5), not emit a boundaries.py that
+    registers only one input and then fails its own reconcile."""
+    root = _scaffold_repo(tmp_path)
+    (root / "contract.yaml").write_text(
+        "system: sys\nversion: 0.1.0\n"
+        "raw:\n  - {name: p_raw, schema: p.raw_report@1, mode: observe}\n"
+        "inputs:\n"
+        "  - {name: records, schema: p.records@1, mode: observe}\n"
+        "  - {name: metrics, schema: p.metrics@1, mode: observe}\n"
+        "outputs:\n  - {name: report, schema: p.report@1, mode: observe}\n"
+    )
+    result = _run("contract", "init", "--root", str(root), cwd=root)
+    assert result.returncode != 0
+    assert "INIT FAILED" in result.stdout
+    assert not (root / "my_pkg" / "boundaries.py").exists()
+    assert not (root / "schemas").exists()
+
+
 def test_dry_run_makes_zero_filesystem_mutations(tmp_path):
     root = _scaffold_repo(tmp_path)
     before = sorted(p.relative_to(root) for p in root.rglob("*") if p.is_file())

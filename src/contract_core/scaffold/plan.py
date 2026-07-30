@@ -147,12 +147,21 @@ def _boundaries_for_existing(contract: Contract) -> list[ResolvedBoundary]:
     return boundaries
 
 
-def _schema_dir_occupied(schema_dir: Path, existing_paths: set[Path]) -> bool:
-    """design §5.1: gap-fill declines whenever the directory already holds ANY semver-named
-    file — not just the one this ref would write. A non-semver stray (`_template.yaml`) does
-    not count, mirroring `parse_semver`'s own "skip strays" contract (resolver.py)."""
+def _major_already_present(schema_dir: Path, version: str, existing_paths: set[Path]) -> bool:
+    """design §5.1: gap-fill declines writing a schema file only when the ref is ALREADY
+    satisfied — which for a `@MAJOR` pin means a file with that same major exists (resolver
+    resolves `@1` against any `1.x.x`, `v[0]==major`). A stray file of a *different* major
+    (`2.0.0.yaml` under an `@1` ref) leaves the ref dangling, so it must NOT suppress the write.
+    Exact `@MAJOR.MINOR.PATCH` refs are satisfied only by their own file — handled by the
+    `path in existing_paths` check in `_plan_schemas`, so this returns False for them. A
+    non-semver stray (`_template.yaml`) never counts (mirrors `parse_semver`'s skip-strays)."""
+    if not version.isdigit():
+        return False
+    major = int(version)
     return any(
-        p.parent == schema_dir and parse_semver(p.stem) is not None
+        p.parent == schema_dir
+        and (parsed := parse_semver(p.stem)) is not None
+        and parsed[0] == major
         for p in existing_paths
     )
 
@@ -165,9 +174,10 @@ def _plan_schemas(boundaries: list[ResolvedBoundary], existing_paths: set[Path])
         schema_dir = schemas_root.joinpath(*name.split("."))
         filename = f"{version}.yaml" if "." in version else f"{version}.0.0.yaml"
         path = schema_dir / filename
-        if path not in existing_paths and _schema_dir_occupied(schema_dir, existing_paths):
+        if (path not in existing_paths
+                and _major_already_present(schema_dir, version, existing_paths)):
             targets.append(Target(
-                path, content="", exists=True, skip_reason="schema directory not empty"
+                path, content="", exists=True, skip_reason="schema major already present"
             ))
             continue
         template, description = _KIND_TEMPLATE[b.direction]
@@ -180,6 +190,32 @@ def _plan_schemas(boundaries: list[ResolvedBoundary], existing_paths: set[Path])
     return targets
 
 
+# Each archetype's boundaries.py template carries exactly one stanza per direction listed here.
+# A faithful render therefore needs exactly one boundary in each — see `_require_scaffoldable`.
+_TEMPLATE_DIRECTIONS: dict[Archetype, tuple[str, ...]] = {
+    "mediated": ("raw", "input", "output"),
+    "file-ingest": ("input", "output"),
+}
+
+
+def _require_scaffoldable(archetype: Archetype, boundaries: list[ResolvedBoundary]) -> None:
+    """The boundaries.py templates render one stanza per direction via `.replace()`; they cannot
+    loop. A contract with 2+ (or 0) boundaries in a template direction can't be faithfully
+    regenerated — a dict keyed by direction would drop all but the last, and an absent direction
+    would leave `{{DIR_NAME}}` unsubstituted. Rather than emit a boundaries.py that fails its own
+    reconcile, refuse (design §5: nothing partial is written; the author wires it by hand)."""
+    counts = {d: sum(1 for b in boundaries if b.direction == d) for d in ("raw", "input", "output")}
+    offenders = [
+        f"{counts[d]} {d} boundaries" for d in _TEMPLATE_DIRECTIONS[archetype] if counts[d] != 1
+    ]
+    if offenders:
+        raise PlanError(
+            f"contract.yaml declares {', '.join(offenders)}; `contract init` scaffolds "
+            f"boundaries.py with exactly one stanza per direction. Author boundaries.py by hand "
+            f"(one @runtime.<direction>(...) per boundary), then re-run to gap-fill the rest."
+        )
+
+
 def _plan_boundaries_py(
     spec: InitSpec, archetype: Archetype, boundaries: list[ResolvedBoundary],
     existing_paths: set[Path],
@@ -188,11 +224,16 @@ def _plan_boundaries_py(
         "boundaries.mediated.py.tmpl" if archetype == "mediated"
         else "boundaries.file-ingest.py.tmpl"
     )
-    values = {f"{b.direction.upper()}_NAME": b.name for b in boundaries}
-    content = render(template, values)
     rel_dir = spec.package_dir.relative_to(spec.root)
     path = rel_dir / "boundaries.py"
-    return Target(path, content, exists=path in existing_paths)
+    exists = path in existing_paths
+    if not exists:
+        # Only guard the write path: an already-wired boundaries.py is skipped, so a multi-boundary
+        # contract the author has themselves wired stays a valid fixed point.
+        _require_scaffoldable(archetype, boundaries)
+    values = {f"{b.direction.upper()}_NAME": b.name for b in boundaries}
+    content = render(template, values)
+    return Target(path, content, exists=exists)
 
 
 def _plan_drift_test(spec: InitSpec, raw: ResolvedBoundary, existing_paths: set[Path]) -> Target:

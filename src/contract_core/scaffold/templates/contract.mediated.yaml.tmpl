@@ -7,9 +7,10 @@ raw:
     source: {kind: {{SOURCE_KIND}}, format: {{SOURCE_FORMAT}}}
     mode: observe
 inputs:
+  # No `source:` — the normalized input is produced by an adapter over the raw payload
+  # (`normalize(raw)` in boundaries.py), not read independently from the vendor.
   - name: {{INPUT_NAME}}
     schema: {{INPUT_REF}}
-    source: {kind: {{SOURCE_KIND}}, format: {{SOURCE_FORMAT}}}
     mode: observe
 outputs:
   - name: {{OUTPUT_NAME}}
