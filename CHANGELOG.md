@@ -11,6 +11,15 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+### Added
+
+- **`contract init`** scaffolds the four mechanical adoption steps — schema + `contract.yaml`
+  authoring, `raw_drift` marker registration, and CI gate wiring — into a consuming repo. The
+  generated tree passes `contract lint` and `contract reconcile` on the first run; placeholder
+  schema fields are marked `REPLACE_ME_*` and the generated drift test fails on purpose until its
+  real assertion is written (see `.github/workflows/contract.yml`'s `drift` job). Additive: no
+  change to the public API surface (`contract_core.__all__`).
+
 ### Changed
 
 - **The reusable CI gate no longer requires a `contract-core-token`** secret. `data-contract` is a

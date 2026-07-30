@@ -33,11 +33,12 @@ from contract_core import load_runtime, ContractRuntime, ContractViolation, Fiel
 
 Those five names (plus `__version__`) are the whole supported surface. **Everything else is
 private** — `contract_core.runtime`, `.errors`, `.contract`, `.resolver`, `.schema`, `.events`,
-`.types`, `.families`, `.vendor`, `.compile.*`, `.cli`. That list is exhaustive, and note that it
-includes `.runtime` and `.errors`: those are where the four exported names are *defined*, but
-`from contract_core.errors import FieldDiff` is not a supported import path — only
-`from contract_core import FieldDiff` is. Import paths into private modules may change without a
-major bump. Run the CLI through the `contract` console script, not by importing `contract_core.cli`.
+`.types`, `.families`, `.vendor`, `.compile.*`, `.cli`, `.reconcile`, `.events_report`,
+`.scaffold`. That list is exhaustive, and note that it includes `.runtime` and `.errors`: those
+are where the four exported names are *defined*, but `from contract_core.errors import
+FieldDiff` is not a supported import path — only `from contract_core import FieldDiff` is.
+Import paths into private modules may change without a major bump. Run the CLI through the
+`contract` console script, not by importing `contract_core.cli`.
 
 ```python
 runtime = load_runtime("contract.yaml", schema_paths=["schemas"])
@@ -183,6 +184,13 @@ python -m venv /tmp/smoke && /tmp/smoke/bin/pip install \
 ```
 
 Expected: `ok`. A failure here is an auth/tag problem, not a library problem.
+
+> **Fast path:** the first four steps below (author the contract + schemas by hand, register the
+> `raw_drift` marker, wire the CI gate) can be scaffolded in one command —
+> `contract init --system <name> --platform <platform> --source <api|mcp|llm|file>` — which
+> generates a tree that already lints and reconciles clean. See the `authoring-data-contracts`
+> skill's Phase A. `init` cannot author real schema content for you (§6.1 of its own design); this
+> section still applies once you're filling in `REPLACE_ME_*` fields with real columns.
 
 ## 6. If you run the `reconcile` gate
 
