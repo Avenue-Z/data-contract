@@ -120,6 +120,24 @@ def test_a_second_run_over_a_fully_scaffolded_tree_writes_nothing():
     assert result.marker_action == MarkerAction.SATISFIED
 
 
+def test_multi_raw_rerun_scaffolds_a_drift_test_for_every_raw_boundary():
+    """`reconcile` gates on EVERY uncovered raw boundary, so a re-run over a contract with two
+    raws must scaffold a drift test for each — covering only the first fails its own reconcile."""
+    contract = Contract(
+        format_version="v1", system="tiktok-brand-pulse", version="0.1.0",
+        raw=[
+            BoundarySpec(name="tiktok_raw", schema="tiktok.raw_report@1", mode="observe"),
+            BoundarySpec(name="meta_raw", schema="meta.raw_report@1", mode="observe"),
+        ],
+        inputs=[BoundarySpec(name="records", schema="tiktok.records@1", mode="observe")],
+        outputs=[BoundarySpec(name="report", schema="tiktok.report@1", mode="observe")],
+    )
+    result = plan(_existing_spec(contract), existing_paths={Path("contract.yaml")})
+    paths = {t.path for t in result.other_targets}
+    assert Path("tests/test_drift_tiktok_raw.py") in paths
+    assert Path("tests/test_drift_meta_raw.py") in paths
+
+
 def test_rerun_report_leads_with_a_read_line_not_a_created_or_skipped_line():
     contract = _mediated_contract()
     result = plan(_existing_spec(contract), existing_paths={Path("contract.yaml")})

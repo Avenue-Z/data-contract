@@ -16,12 +16,20 @@ def apply(result: Plan, root: Path) -> None:
         [*result.other_targets] if result.is_rerun
         else [result.contract_target, *result.other_targets]
     )
+    # Compute the pyproject edit BEFORE writing any file. `apply_marker` is the only step that
+    # can raise; doing it first keeps the run all-or-nothing (design §2.2) — a failure here
+    # leaves the repo untouched instead of half-scaffolded.
+    writes_marker = result.marker_action in (MarkerAction.INSERT_KEY, MarkerAction.APPEND_SECTION)
+    pyproject_edit: tuple[Path, str] | None = None
+    if writes_marker:
+        pyproject_path = root / "pyproject.toml"
+        edited = apply_marker(pyproject_path.read_text(), result.marker_action)
+        pyproject_edit = (pyproject_path, edited)
+
     for t in targets:
         _write_target(root, t)
-    if result.marker_action in (MarkerAction.INSERT_KEY, MarkerAction.APPEND_SECTION):
-        pyproject_path = root / "pyproject.toml"
-        text = pyproject_path.read_text()
-        pyproject_path.write_text(apply_marker(text, result.marker_action))
+    if pyproject_edit is not None:
+        pyproject_edit[0].write_text(pyproject_edit[1])
 
 
 def _write_target(root: Path, target: Target) -> None:

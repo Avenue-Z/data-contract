@@ -1,7 +1,8 @@
 """Pure planning for `contract init` (design 2026-07-30 §2.2, §3, §4, §5).
 
-No I/O. Every validation failure (bad --platform, flags-with-existing-contract) and every
-created/skipped decision is decided here, purely from `existing_paths`, before apply.py writes
+No writes. `plan()` reads only the packaged `.tmpl` files (via `render()`); it never touches the
+target repo. Every validation failure (bad --system/--platform, flags-with-existing-contract) and
+every created/skipped decision is decided here, purely from `existing_paths`, before apply.py writes
 anything — this is what lets --dry-run and a real run share one code path (design §2.2).
 """
 from __future__ import annotations
@@ -75,13 +76,16 @@ class Plan:
     next_steps: list[str]
 
 
-def _validate_platform(platform: str) -> None:
-    if not platform:
-        raise PlanError("--platform must be a non-empty string of letters, digits, '_' and '-'")
-    for ch in platform:
+def _validate_identifier(flag: str, value: str) -> None:
+    """Both `--system` and `--platform` are interpolated unquoted into contract.yaml via naive
+    `.replace()`; an unvalidated value (e.g. `a: b`) yields a tree that lints as malformed YAML,
+    breaking the correct-by-construction guarantee. Restrict to the same charset (design §7)."""
+    if not value:
+        raise PlanError(f"{flag} must be a non-empty string of letters, digits, '_' and '-'")
+    for ch in value:
         if not _PLATFORM_RE.fullmatch(ch):
             raise PlanError(
-                f"--platform {platform!r} contains {ch!r}; only letters, digits, "
+                f"{flag} {value!r} contains {ch!r}; only letters, digits, "
                 f"'_' and '-' are allowed"
             )
 
@@ -225,8 +229,11 @@ def _common_targets(
     targets = _plan_schemas(boundaries, existing_paths)
     targets.append(_plan_boundaries_py(spec, archetype, boundaries, existing_paths))
     if archetype == "mediated":
-        raw = next(b for b in boundaries if b.direction == "raw")
-        targets.append(_plan_drift_test(spec, raw, existing_paths))
+        # One drift test per raw boundary — `reconcile` emits a gating `D` finding for EVERY
+        # uncovered raw (reconcile.py), so covering only the first would fail its own reconcile
+        # on the multi-raw re-run path (a fresh run only ever has one raw).
+        for raw in (b for b in boundaries if b.direction == "raw"):
+            targets.append(_plan_drift_test(spec, raw, existing_paths))
     else:
         targets.append(_plan_tests_placeholder(existing_paths))
     targets.append(_plan_ci_workflow(spec, archetype, existing_paths))
@@ -256,7 +263,8 @@ def plan(spec: InitSpec, existing_paths: set[Path]) -> Plan:
         raise PlanError("internal: exactly one of InitSpec.fresh/.existing must be set")
 
     if spec.fresh is not None:
-        _validate_platform(spec.fresh.platform)
+        _validate_identifier("--system", spec.fresh.system)
+        _validate_identifier("--platform", spec.fresh.platform)
         system = spec.fresh.system
         archetype = _archetype_of(spec.fresh.source_kind)
         boundaries = _boundaries_for_fresh(spec.fresh)

@@ -62,6 +62,21 @@ def test_apply_does_not_touch_pyproject_toml_when_manual(tmp_path):
     assert (tmp_path / "pyproject.toml").read_text() == original
 
 
+def test_apply_writes_nothing_when_the_marker_edit_cannot_be_applied(tmp_path):
+    """All-or-nothing: if `apply_marker` raises (INSERT_KEY with no locatable header LINE),
+    the marker edit is computed BEFORE any file is written, so the tree stays untouched."""
+    import pytest
+
+    # A pyproject with no `[tool.pytest.ini_options]` header line — apply_marker(INSERT_KEY) raises.
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    extra = Target(Path("schemas/p/n/1.0.0.yaml"), "schema: p.n\n", exists=False)
+    plan = _plan(tmp_path, extra_targets=[extra], marker_action=MarkerAction.INSERT_KEY)
+    with pytest.raises(ValueError):
+        apply(plan, tmp_path)
+    assert not (tmp_path / "contract.yaml").exists()
+    assert not (tmp_path / "schemas").exists()
+
+
 def test_apply_is_idempotent_over_two_calls(tmp_path):
     extra = Target(Path("schemas/p/n/1.0.0.yaml"), "schema: p.n\n", exists=False)
     plan = _plan(tmp_path, extra_targets=[extra])

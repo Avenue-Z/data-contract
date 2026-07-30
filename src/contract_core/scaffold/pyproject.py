@@ -42,7 +42,12 @@ def guard_marker(pyproject_text: str) -> MarkerAction:
         return MarkerAction.APPEND_SECTION
     markers = pytest_opts.get("markers")
     if markers is None:
-        return MarkerAction.INSERT_KEY
+        # The section exists semantically, but `apply_marker` inserts by locating the
+        # `[tool.pytest.ini_options]` header LINE textually. A dotted/inline-table spelling
+        # (e.g. `[tool.pytest]` + `ini_options = {...}`) has no such line, so there is no
+        # append-safe anchor — fall back to MANUAL rather than crash mid-apply (design §8).
+        return MarkerAction.INSERT_KEY if _find_header_line(pyproject_text) is not None \
+            else MarkerAction.MANUAL
     for m in markers:
         if str(m).split(":", 1)[0].strip() == _MARKER_NAME:
             return MarkerAction.SATISFIED
@@ -61,13 +66,32 @@ def apply_marker(pyproject_text: str, action: MarkerAction) -> str:
     raise ValueError(f"apply_marker called with a non-writing action: {action!r}")
 
 
+def _is_header_line(line: str) -> bool:
+    """True when `line` is the `[tool.pytest.ini_options]` header, tolerating surrounding
+    whitespace and a trailing `# comment` (a `#` after the closing `]` is a TOML comment,
+    never data). Dotted (`[tool.pytest.ini_options.foo]`) headers do NOT match — the extra
+    segment leaves `.foo]` where the closing `]` is expected."""
+    stripped = line.strip()
+    if stripped == _SECTION_HEADER:
+        return True
+    rest = stripped[len(_SECTION_HEADER):]
+    return stripped.startswith(_SECTION_HEADER) and rest.lstrip().startswith("#")
+
+
+def _find_header_line(text: str) -> int | None:
+    for i, line in enumerate(text.splitlines()):
+        if _is_header_line(line):
+            return i
+    return None
+
+
 def _insert_markers_key(text: str) -> str:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     inserted = False
     for line in lines:
         out.append(line)
-        if not inserted and line.strip() == _SECTION_HEADER:
+        if not inserted and _is_header_line(line):
             out.append(f"markers = [{_MARKER_LINE}]\n")
             inserted = True
     if not inserted:

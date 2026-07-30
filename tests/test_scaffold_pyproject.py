@@ -75,3 +75,25 @@ def test_result_of_append_section_is_itself_satisfied():
     text = "[tool.ruff]\nline-length = 100\n"
     out = apply_marker(text, MarkerAction.APPEND_SECTION)
     assert guard_marker(out) is MarkerAction.SATISFIED
+
+
+@pytest.mark.parametrize("header", [
+    "[tool.pytest.ini_options]  # pytest config",
+    "[tool.pytest.ini_options]# no space",
+    "[tool.pytest.ini_options]   ",
+])
+def test_insert_key_tolerates_comment_and_whitespace_on_header(header):
+    """guard_marker classified INSERT_KEY from a tomllib parse; apply_marker located the header
+    by exact line equality, so a commented/whitespaced header crashed apply mid-run. Both now
+    share one matcher — classify and insert must agree, and the result reads back SATISFIED."""
+    text = f"{header}\npythonpath = [\"src\"]\n"
+    assert guard_marker(text) is MarkerAction.INSERT_KEY
+    out = apply_marker(text, MarkerAction.INSERT_KEY)
+    assert guard_marker(out) is MarkerAction.SATISFIED
+
+
+def test_dotted_inline_ini_options_falls_back_to_manual():
+    """A dotted/inline-table spelling has no `[tool.pytest.ini_options]` header LINE to anchor
+    the text insert, so guard_marker returns MANUAL rather than crashing in apply_marker."""
+    text = '[tool.pytest]\nini_options = {pythonpath = ["src"]}\n'
+    assert guard_marker(text) is MarkerAction.MANUAL

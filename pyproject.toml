@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contract-core"
-version = "0.7.0"
+version = "0.8.0"
 description = "Data contract core library — schemas, contracts, compilers, runtime validation."
 requires-python = ">=3.13"
 dependencies = [

@@ -94,6 +94,23 @@ def test_empty_platform_is_rejected_before_anything_is_planned():
         plan(_fresh_spec(platform=""), existing_paths=set())
 
 
+def test_system_with_yaml_metacharacters_is_rejected_not_silently_scaffolded():
+    """`--system` is interpolated unquoted into contract.yaml; an unvalidated `a: b` would
+    scaffold a tree that fails `contract lint` as malformed YAML. Validate it like --platform."""
+    with pytest.raises(PlanError, match=":"):
+        plan(_fresh_spec(system="a: b"), existing_paths=set())
+
+
+def test_empty_system_is_rejected():
+    with pytest.raises(PlanError):
+        plan(_fresh_spec(system=""), existing_paths=set())
+
+
+def test_system_with_a_hyphen_is_accepted():
+    result = plan(_fresh_spec(system="tiktok-brand-pulse"), existing_paths=set())
+    assert "system: tiktok-brand-pulse" in result.contract_target.content
+
+
 def test_existing_targets_are_reported_skipped_not_overwritten():
     existing = {Path("contract.yaml"), Path("src/my_pkg/boundaries.py")}
     result = plan(_fresh_spec(), existing_paths=existing)
