@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 from contract_core.contract import Contract
+from contract_core.resolver import parse_semver
 from contract_core.scaffold.pyproject import MANUAL_SNIPPET, MarkerAction, guard_marker
 from contract_core.scaffold.render import render
 
@@ -133,6 +134,23 @@ def _plan_contract_yaml(
     return Target(path, content, exists=path in existing_paths)
 
 
+def _boundaries_for_existing(contract: Contract) -> list[ResolvedBoundary]:
+    boundaries = [ResolvedBoundary("raw", b.name, b.schema_ref) for b in contract.raw]
+    boundaries += [ResolvedBoundary("input", b.name, b.schema_ref) for b in contract.inputs]
+    boundaries += [ResolvedBoundary("output", b.name, b.schema_ref) for b in contract.outputs]
+    return boundaries
+
+
+def _schema_dir_occupied(schema_dir: Path, existing_paths: set[Path]) -> bool:
+    """design §5.1: gap-fill declines whenever the directory already holds ANY semver-named
+    file — not just the one this ref would write. A non-semver stray (`_template.yaml`) does
+    not count, mirroring `parse_semver`'s own "skip strays" contract (resolver.py)."""
+    return any(
+        p.parent == schema_dir and parse_semver(p.stem) is not None
+        for p in existing_paths
+    )
+
+
 def _plan_schemas(boundaries: list[ResolvedBoundary], existing_paths: set[Path]) -> list[Target]:
     schemas_root = Path("schemas")
     targets = []
@@ -141,6 +159,11 @@ def _plan_schemas(boundaries: list[ResolvedBoundary], existing_paths: set[Path])
         schema_dir = schemas_root.joinpath(*name.split("."))
         filename = f"{version}.yaml" if "." in version else f"{version}.0.0.yaml"
         path = schema_dir / filename
+        if path not in existing_paths and _schema_dir_occupied(schema_dir, existing_paths):
+            targets.append(Target(
+                path, content="", exists=True, skip_reason="schema directory not empty"
+            ))
+            continue
         template, description = _KIND_TEMPLATE[b.direction]
         content = render(template, {
             "SCHEMA_NAME": name,
@@ -230,7 +253,13 @@ def plan(spec: InitSpec, existing_paths: set[Path]) -> Plan:
         )
         is_rerun = False
     else:
-        raise NotImplementedError("re-run/gap-fill branch — implemented in Task 6")
+        contract = spec.existing
+        assert contract is not None
+        system = contract.system
+        archetype = "mediated" if contract.raw else "file-ingest"
+        boundaries = _boundaries_for_existing(contract)
+        contract_target = Target(Path("contract.yaml"), content="", exists=True)
+        is_rerun = True
 
     other_targets = _common_targets(spec, archetype, boundaries, existing_paths)
     marker_action = guard_marker(spec.pyproject_text)
