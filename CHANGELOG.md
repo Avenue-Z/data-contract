@@ -17,7 +17,9 @@ changes to the public API or the authored format. Read the entry before moving a
   public repo, so the read token that authenticated a private clone was dead weight — anonymous
   clone already works, and the gate's `actions/checkout` of this repo now uses the default
   `GITHUB_TOKEN`. Passing `contract-core-token` still works unchanged (the secret is now optional,
-  not removed), so no caller needs to change anything to stay green.
+  not removed), so no caller needs to change anything to stay green. If a token is supplied, the
+  gate now verifies it can authenticate before installing anything, so a wrong or typo'd secret
+  fails fast with a named cause instead of surfacing later as an opaque `pip` clone error.
 
 ## [0.7.0] — 2026-07-29
 

@@ -240,6 +240,10 @@ jobs:
         schemas
       tests: |                     # one path per line
         tests
+    # Optional — data-contract is public, so most callers omit this. Pass it only if your org's
+    # policy requires an explicit credential for pip's clone of this dependency (see §1).
+    # secrets:
+    #   contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
 ```
 
 `schemas` and `tests` are **newline-delimited** — one path per line under a `|` block. Blank and
@@ -272,14 +276,17 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install and run the gate
+        # CONTRACT_CORE_READ_TOKEN is optional — data-contract is public. Set it only if your
+        # org's policy requires an explicit credential for pip's clone of this dependency.
         env:
           CONTRACT_CORE_TOKEN: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
         run: |
           set -euo pipefail
-          [ -n "${CONTRACT_CORE_TOKEN:-}" ] || { echo "::error::CONTRACT_CORE_READ_TOKEN is empty"; exit 1; }
-          git config --global \
-            url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
-            "https://github.com/Avenue-Z/data-contract.git"
+          if [ -n "${CONTRACT_CORE_TOKEN:-}" ]; then
+            git config --global \
+              url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
+              "https://github.com/Avenue-Z/data-contract.git"
+          fi
           pip install .
           contract lint --contract contract.yaml --schemas schemas
           contract reconcile --contract contract.yaml --package my_pkg --tests tests
@@ -362,5 +369,5 @@ Until then, run `observe` where the evidence survives: locally and in CI.
 
 ---
 
-*When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin + deploy token), §3 (the
-kill switch) and §4 (the absent-library pattern) — that skill is the eventual home for all three.*
+*When the §5.5 authoring skill lands in Phase 1, it must carry §1 (the pin), §3 (the kill switch)
+and §4 (the absent-library pattern) — that skill is the eventual home for all three.*

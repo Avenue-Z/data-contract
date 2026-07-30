@@ -3,7 +3,9 @@ name: contract-gate
 # Reusable gate: a consuming repo calls this to run `contract lint` + `contract reconcile` against
 # ITS OWN contract and package, failing CI on any gating finding. It is `on: workflow_call` ONLY — it
 # never runs on this repo's own PRs, adds no check context here, and cannot touch the required `ci`
-# aggregate. Design: docs/superpowers/specs/2026-07-23-contract-gate-ci-wiring-design.md
+# aggregate. Design: docs/superpowers/specs/2026-07-23-contract-gate-ci-wiring-design.md — that doc
+# predates data-contract going public and still describes contract-core-token as required; this
+# workflow is the current source of truth on that point.
 on:
   workflow_call:
     inputs:
@@ -37,7 +39,8 @@ on:
       contract-core-token:
         description: "Optional. data-contract is public, so this is unnecessary for a normal
           clone — pass it only if your org's policy requires an explicit credential for
-          pip's clone of this dependency."
+          pip's clone of this dependency. Scoped to that clone only: it does not authenticate
+          this workflow's own checkout steps, which read data-contract unauthenticated."
         required: false
 
 # Least privilege: this job reads code and reports a result; it never writes to the repo.
@@ -91,6 +94,11 @@ jobs:
           git config --global \
             url."https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git".insteadOf \
             "https://github.com/Avenue-Z/data-contract.git"
+          # Optional is not the same as unvalidated: a supplied-but-wrong token (typo'd secret
+          # name, expired credential) would otherwise surface later as an opaque git error deep
+          # inside pip's install log. Fail here instead, with a message that names the cause.
+          git ls-remote "https://x-access-token:${CONTRACT_CORE_TOKEN}@github.com/Avenue-Z/data-contract.git" HEAD >/dev/null \
+            || { echo "::error::contract-core-token was supplied but could not authenticate against Avenue-Z/data-contract — check the secret value."; exit 1; }
 
       # 5. Install the consumer project (brings in the pyproject-pinned contract-core and the
       #    `contract` console script). `install-command` is consumer-controlled shell.
