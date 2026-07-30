@@ -195,6 +195,15 @@ def _plan_drift_test(spec: InitSpec, raw: ResolvedBoundary, existing_paths: set[
     return Target(path, content, exists=path in existing_paths)
 
 
+def _plan_tests_placeholder(existing_paths: set[Path]) -> Target:
+    """File-ingest has no drift test, so nothing else creates tests/. The generated gate runs
+    `contract reconcile --tests tests` (required, must exist), so without this a scaffolded
+    file-ingest repo would fail its own gate. A tracked placeholder keeps the dir present;
+    reconcile finds no raw-drift test required (no raw boundary) and exits 0."""
+    path = Path("tests") / ".gitkeep"
+    return Target(path, content="", exists=path in existing_paths)
+
+
 def _plan_ci_workflow(
     spec: InitSpec, archetype: Archetype, existing_paths: set[Path],
 ) -> Target:
@@ -216,6 +225,8 @@ def _common_targets(
     if archetype == "mediated":
         raw = next(b for b in boundaries if b.direction == "raw")
         targets.append(_plan_drift_test(spec, raw, existing_paths))
+    else:
+        targets.append(_plan_tests_placeholder(existing_paths))
     targets.append(_plan_ci_workflow(spec, archetype, existing_paths))
     return targets
 

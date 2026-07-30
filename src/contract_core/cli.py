@@ -48,6 +48,9 @@ def _scan_existing_paths(root: Path) -> set[Path]:
     if tests_dir.is_dir():
         for p in tests_dir.glob("test_drift_*.py"):
             paths.add(p.relative_to(root))
+        gitkeep = tests_dir / ".gitkeep"
+        if gitkeep.is_file():
+            paths.add(gitkeep.relative_to(root))
     workflow = root / ".github" / "workflows" / "contract.yml"
     if workflow.is_file():
         paths.add(workflow.relative_to(root))

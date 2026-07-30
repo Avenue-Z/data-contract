@@ -144,3 +144,15 @@ def test_manual_marker_action_surfaces_the_snippet_in_next_steps():
     result = plan(_fresh_spec(pyproject_text=text), existing_paths=set())
     assert result.marker_action == MarkerAction.MANUAL
     assert any("raw_drift" in s for s in result.next_steps)
+
+
+def test_file_ingest_creates_a_tests_placeholder_so_the_gate_reconciles():
+    result = plan(_fresh_spec(source_kind="file"), existing_paths=set())
+    paths = {t.path for t in result.other_targets}
+    assert Path("tests/.gitkeep") in paths
+
+
+def test_mediated_has_no_tests_placeholder_only_the_drift_test():
+    result = plan(_fresh_spec(source_kind="api"), existing_paths=set())
+    paths = {t.path for t in result.other_targets}
+    assert Path("tests/.gitkeep") not in paths
