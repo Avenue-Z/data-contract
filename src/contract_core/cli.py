@@ -27,6 +27,33 @@ def _lintable_schema_files(schema_dirs: Sequence[str]) -> list[Path]:
     return files
 
 
+def _scan_existing_paths(root: Path) -> set[Path]:
+    """Every path `contract init` could possibly treat as already-existing, relative to root.
+
+    Narrow by construction (design §2.2): plan() is pure, so this one filesystem walk — over
+    exactly the subtrees init could ever write to — is the entire interface it sees.
+    """
+    paths: set[Path] = set()
+    if (root / "contract.yaml").is_file():
+        paths.add(Path("contract.yaml"))
+    schemas = root / "schemas"
+    if schemas.is_dir():
+        for p in schemas.rglob("*.yaml"):
+            paths.add(p.relative_to(root))
+    for pkg_root in (root, root / "src"):
+        if pkg_root.is_dir():
+            for p in pkg_root.glob("*/boundaries.py"):
+                paths.add(p.relative_to(root))
+    tests_dir = root / "tests"
+    if tests_dir.is_dir():
+        for p in tests_dir.glob("test_drift_*.py"):
+            paths.add(p.relative_to(root))
+    workflow = root / ".github" / "workflows" / "contract.yml"
+    if workflow.is_file():
+        paths.add(workflow.relative_to(root))
+    return paths
+
+
 def _echo_format_error(exc: ContractFormatError, *, loc_prefix: str = "") -> None:
     """Render a `ContractFormatError` identically wherever it surfaces (design §5.2.1).
 
@@ -167,3 +194,90 @@ def events(log_path: str | None, contract_path: str | None, as_json: bool) -> No
         if contract is None:
             return
     click.echo(render_human(report))
+
+
+@main.command()
+@click.option("--system", default=None, help="the contract's system: value")
+@click.option("--platform", default=None, help="schema namespace under schemas/<platform>/")
+@click.option("--source", "source_kind", default=None,
+              type=click.Choice(["api", "mcp", "llm", "file"]),
+              help="api/mcp/llm -> mediated; file -> file-ingest")
+@click.option("--package", "package_override", default=None,
+              help="importable package name; overrides detection")
+@click.option("--root", "root_str", default=".", type=click.Path(exists=True, file_okay=False),
+              help="target repo root")
+@click.option("--dry-run", is_flag=True, help="print the plan report, write nothing")
+def init(
+    system: str | None, platform: str | None, source_kind: str | None,
+    package_override: str | None, root_str: str, dry_run: bool,
+) -> None:
+    """Scaffold the mechanical steps of adopting a data contract (design 2026-07-30)."""
+    from typing import cast
+
+    from contract_core import __version__
+    from contract_core.scaffold.apply import apply as run_apply
+    from contract_core.scaffold.detect import PackageDetectionError, detect_package
+    from contract_core.scaffold.plan import (
+        FreshSpec,
+        InitSpec,
+        PlanError,
+        SourceKind,
+        render_report,
+    )
+    from contract_core.scaffold.plan import plan as build_plan
+
+    root = Path(root_str)
+    contract_path = root / "contract.yaml"
+    given = [f for f, v in (("--system", system), ("--platform", platform),
+                             ("--source", source_kind)) if v is not None]
+
+    fresh = None
+    existing = None
+    if contract_path.is_file():
+        if given:
+            click.echo(
+                f"INIT FAILED — contract.yaml already exists; "
+                f"{', '.join(given)} would be ignored, so it is refused instead"
+            )
+            sys.exit(1)
+        try:
+            existing = Contract.from_yaml(contract_path)
+        except ContractFormatError as exc:
+            click.echo("INIT FAILED — malformed contract.yaml:")
+            _echo_format_error(exc)
+            sys.exit(1)
+    else:
+        missing = [f for f, v in (("--system", system), ("--platform", platform),
+                                   ("--source", source_kind)) if v is None]
+        if missing:
+            click.echo(f"INIT FAILED — contract.yaml absent; required: {', '.join(missing)}")
+            sys.exit(1)
+        assert system is not None and platform is not None and source_kind is not None
+        fresh = FreshSpec(
+            system=system, platform=platform, source_kind=cast(SourceKind, source_kind)
+        )
+
+    try:
+        detected = detect_package(root, package_override)
+    except PackageDetectionError as exc:
+        click.echo(f"INIT FAILED — {exc}")
+        sys.exit(1)
+
+    spec = InitSpec(
+        root=root, package=detected.name, package_dir=detected.package_dir,
+        pyproject_text=detected.pyproject_text, contract_core_version=__version__,
+        fresh=fresh, existing=existing,
+    )
+    try:
+        result = build_plan(spec, _scan_existing_paths(root))
+    except PlanError as exc:
+        click.echo(f"INIT FAILED — {exc}")
+        sys.exit(1)
+
+    for line in render_report(result):
+        click.echo(line)
+    for step in result.next_steps:
+        click.echo(f"next: {step}")
+
+    if not dry_run:
+        run_apply(result, root)
