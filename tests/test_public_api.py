@@ -110,3 +110,26 @@ def test_field_diff_carries_the_value_violation_fields():
     names = set(FieldDiff.model_fields)
     assert names == {"field", "expected", "observed", "problem",
                      "constraint", "violating_rows", "samples"}
+
+
+_DOCUMENTED_PRIVATE_MODULES = {
+    "runtime", "errors", "contract", "resolver", "schema", "events", "types", "families",
+    "vendor", "compile", "cli", "reconcile", "events_report", "scaffold",
+}
+
+
+def test_private_module_list_matches_the_modules_actually_present():
+    """design §2.3: the docstring's private-module list is exhaustive by claim. Compare it
+    against the filesystem so the next omission fails CI instead of aging into the docs."""
+    from pathlib import Path
+
+    src_dir = Path(contract_core.__file__).parent
+    actual = {
+        p.stem for p in src_dir.glob("*.py")
+        if p.stem not in {"__init__", "__main__"}
+    }
+    actual |= {
+        d.name for d in src_dir.iterdir()
+        if d.is_dir() and (d / "__init__.py").is_file()
+    }
+    assert actual == _DOCUMENTED_PRIVATE_MODULES

@@ -35,6 +35,12 @@ This skill rides **alongside** superpowers `brainstorming` and `writing-plans` (
 comes first). It adds three obligations, one per stage:
 
 **Phase A — during the spec (brainstorming): emit `contract.yaml` + schema files next to the spec.**
+0. **Fast path:** if the target repo already has a `pyproject.toml` and an importable package,
+   run `contract init --system <name> --platform <platform> --source <api|mcp|llm|file>` first —
+   it scaffolds a tree that already lints and reconciles clean, with placeholder schema fields
+   marked `REPLACE_ME_*`. The steps below are what to do by hand when `init` doesn't apply, and
+   are exactly what `init` automates when it does — read them either way to know what you're
+   editing.
 1. List boundaries: each external read → an `input`; each deliverable → an `output`.
 2. **Mediated source? (API / MCP / LLM) → it *also* gets a `raw` boundary** before the adapter. A
    file/CSV read is a single (normalized) boundary, no `raw`. See `references/boundary-decision.md`.

@@ -1,11 +1,10 @@
 # TEMPLATE — wiring the contract gate into CI. Save as .github/workflows/contract.yml in YOUR repo.
 # Full detail: consuming-repo-setup.md §7. This runs `contract lint` + `contract reconcile` per PR.
 #
-# THREE things must line up (all >= v0.5.0, the gate's first release):
+# TWO things must line up (all >= v0.5.0, the gate's first release):
 #   1. Your pyproject.toml pins  contract-core @ git+https://github.com/Avenue-Z/data-contract.git@vX.Y.Z
-#      — keep the `.git` suffix (the gate scopes its read token by rewriting that clone URL).
+#      — keep the `.git` suffix; data-contract is public so no read token is required.
 #   2. The reusable workflow `@tag` below is the SAME tag (a mismatch is silent CLI breakage).
-#   3. CI has a token/deploy key with contents:read on Avenue-Z/data-contract (data-contract is private).
 #
 # Also register the raw_drift marker in pyproject.toml so pytest --strict-markers won't reject it:
 #   [tool.pytest.ini_options]
@@ -27,5 +26,3 @@ jobs:
         schemas
       tests: |                   # one path per line; required
         tests
-    secrets:
-      contract-core-token: ${{ secrets.CONTRACT_CORE_READ_TOKEN }}
