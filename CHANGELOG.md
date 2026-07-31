@@ -11,6 +11,8 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-31
+
 ### Added
 
 - **`contract init`** scaffolds the four mechanical adoption steps — schema + `contract.yaml`
