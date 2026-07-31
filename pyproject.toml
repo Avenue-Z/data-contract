@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contract-core"
-version = "0.7.0"
+version = "0.8.0"
 description = "Data contract core library — schemas, contracts, compilers, runtime validation."
 requires-python = ">=3.13"
 dependencies = [
@@ -25,16 +25,22 @@ dependencies = [
 # because tests/test_distribution.py installs with --no-build-isolation, so the backend has
 # to already exist in the environment — that is what keeps the install test off PyPI.
 dev = ["pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pre-commit>=3.8",
-       "hatchling", "pandas-stubs", "types-jsonschema", "types-PyYAML"]
+       "hatchling", "build", "pandas-stubs", "types-jsonschema", "types-PyYAML"]
 
 [project.scripts]
 contract = "contract_core.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/contract_core"]
+# hatchling's default packages-based selection already walks non-.py files under src/contract_core
+# (that's why the vendor JSON above didn't previously need this), which would otherwise collide
+# with the templates force-include below ("second file being added to the wheel archive at the
+# same path"). Exclude it from the default walk so force-include is the templates dir's one source.
+exclude = ["src/contract_core/scaffold/templates"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/contract_core/vendor/odcs-json-schema-v3.1.0-20260505.json" = "contract_core/vendor/odcs-json-schema-v3.1.0-20260505.json"
+"src/contract_core/scaffold/templates" = "contract_core/scaffold/templates"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

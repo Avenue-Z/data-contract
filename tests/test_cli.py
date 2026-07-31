@@ -297,3 +297,77 @@ def test_events_corrupt_log_surfaces_skipped_not_just_run_observe(tmp_path):
     res = CliRunner().invoke(main, ["events", "--log", str(p)])
     assert res.exit_code == 0, res.output
     assert "skipped" in res.output.lower()
+
+
+# ---- `contract init` (design 2026-07-30-contract-init) ----
+
+def _init(tmp_path, *args):
+    runner = CliRunner()
+    return runner.invoke(main, ["init", "--root", str(tmp_path), *args])
+
+
+def _scaffold_repo(tmp_path, name="my_pkg"):
+    (tmp_path / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
+    (tmp_path / name).mkdir()
+    (tmp_path / name / "__init__.py").write_text("")
+
+
+def test_init_requires_system_platform_source_when_contract_absent(tmp_path):
+    _scaffold_repo(tmp_path)
+    result = _init(tmp_path)
+    assert result.exit_code != 0
+    assert "--system" in result.output
+    assert "--platform" in result.output
+    assert "--source" in result.output
+
+
+def test_init_first_run_creates_the_expected_tree(tmp_path):
+    _scaffold_repo(tmp_path)
+    result = _init(tmp_path, "--system", "sys", "--platform", "plat", "--source", "api")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "contract.yaml").is_file()
+    assert (tmp_path / "schemas/plat/raw_report/1.0.0.yaml").is_file()
+    assert (tmp_path / "my_pkg/boundaries.py").is_file()
+    assert (tmp_path / "tests/test_drift_plat_raw.py").is_file()
+    assert (tmp_path / ".github/workflows/contract.yml").is_file()
+
+
+def test_init_dry_run_writes_nothing(tmp_path):
+    _scaffold_repo(tmp_path)
+    result = _init(tmp_path, "--system", "sys", "--platform", "plat", "--source", "api",
+                    "--dry-run")
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / "contract.yaml").exists()
+    assert "created  contract.yaml" in result.output
+
+
+def test_init_flags_with_existing_contract_is_rejected(tmp_path):
+    _scaffold_repo(tmp_path)
+    (tmp_path / "contract.yaml").write_text("system: sys\nversion: 0.1.0\n")
+    result = _init(tmp_path, "--system", "sys", "--platform", "plat", "--source", "api")
+    assert result.exit_code != 0
+    assert "contract.yaml already exists" in result.output
+
+
+def test_init_rerun_over_a_complete_tree_is_a_fixed_point(tmp_path):
+    _scaffold_repo(tmp_path)
+    first = _init(tmp_path, "--system", "sys", "--platform", "plat", "--source", "api")
+    assert first.exit_code == 0, first.output
+    second = _init(tmp_path)
+    assert second.exit_code == 0, second.output
+    assert "read      contract.yaml" in second.output
+
+
+def test_init_platform_with_a_dot_exits_nonzero_and_writes_nothing(tmp_path):
+    _scaffold_repo(tmp_path)
+    result = _init(tmp_path, "--system", "sys", "--platform", "google.ads", "--source", "api")
+    assert result.exit_code != 0
+    assert "." in result.output
+    assert not (tmp_path / "contract.yaml").exists()
+
+
+def test_init_no_package_names_the_flag(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "my-pkg"\n')
+    result = _init(tmp_path, "--system", "sys", "--platform", "plat", "--source", "api")
+    assert result.exit_code != 0
+    assert "--package" in result.output

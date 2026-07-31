@@ -3,16 +3,16 @@
 
 Everything exported here is a semver obligation (R9 design §3.2). Everything else —
 `runtime`, `errors`, `contract`, `schema`, `events`, `resolver`, `types`, `families`,
-`vendor`, `compile.*`, `cli` — is **private**: import paths into those modules are not
-supported and may change without a major bump. That list is exhaustive, and it includes
-`errors` and `runtime`, the modules the four exported names are *defined* in — reaching
-past this package for them is not supported either. The CLI is invoked through the
-`contract` console script, not by importing `contract_core.cli`.
+`vendor`, `compile.*`, `cli`, `reconcile`, `events_report`, `scaffold` — is **private**:
+import paths into those modules are not supported and may change without a major bump. That
+list is exhaustive, and it includes `errors` and `runtime`, the modules the four exported
+names are *defined* in — reaching past this package for them is not supported either. The
+CLI is invoked through the `contract` console script, not by importing `contract_core.cli`.
 """
 from contract_core.errors import ContractFormatError, ContractViolation, FieldDiff
 from contract_core.runtime import ContractRuntime, load_runtime
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "ContractFormatError",
