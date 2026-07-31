@@ -1,0 +1,44 @@
+name: gate-selftest
+
+# Self-test for the reusable contract-gate (contract-gate.yml). That workflow is `on: workflow_call`
+# only, so nothing in this repo otherwise exercises it — it had to be read statically, never run
+# (see docs/notes/2026-07-31-review-v0.8.0-repo-template-integration.md, finding 1). This job calls
+# the gate against a committed fixture consumer (.github/fixtures/gate-consumer/, a real `contract
+# init` output), turning "coherent on read" into "ran green in Actions" for the no-token happy path:
+# ref resolution → checkout of this repo's expander → install → lint → reconcile.
+#
+# NOT covered here, by construction:
+#   - The supplied-but-wrong-token `git ls-remote` fast-fail. Asserting the gate FAILS would need
+#     `continue-on-error` on the calling job, which GitHub forbids on a `uses:` (reusable-workflow)
+#     job; replicating the token shell inline would be the drift-prone copy the gate avoids. Left to
+#     real-consumer confirmation (finding 1's follow-up).
+#   - External-consumer ref resolution. Here the caller IS this repo on the same ref, so a correct
+#     and a broken `job.workflow_ref` resolve the same valid ref — this proves the wiring, not the
+#     cross-repo ref logic. That, too, is confirmable only from a consumer repo.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/contract-gate.yml
+      - .github/workflows/gate-selftest.yml
+      - .github/fixtures/gate-consumer/**
+      - scripts/expand-flags.sh
+  push:
+    branches: [dev, staging, main]
+
+permissions:
+  contents: read
+
+jobs:
+  no-token-happy-path:
+    # No `secrets:` block → contract-core-token is unset, exercising the gate's no-token skip branch
+    # (data-contract is public). install-command overrides the default `pip install .`: the first
+    # install builds the `contract` CLI from THIS checkout (the code under test), the second makes
+    # the fixture's package importable for `reconcile --package`, --no-deps so it pulls no pinned tag.
+    uses: ./.github/workflows/contract-gate.yml
+    with:
+      contract: .github/fixtures/gate-consumer/contract.yaml
+      package: gate_consumer
+      schemas: .github/fixtures/gate-consumer/schemas
+      tests: .github/fixtures/gate-consumer/tests
+      install-command: pip install . && pip install --no-deps ./.github/fixtures/gate-consumer
