@@ -1,19 +1,20 @@
 # Integrating data contracts into `Avenue-Z/repo-template`
 
-**Status:** ready to execute once `contract init` ships. Not blocked on specification.
+**Status:** ready to execute. `contract init` shipped in data-contract **v0.8.0** and P1 is merged
+and released; the one remaining gate is the visibility decision (§1.3).
 
-**Depends on:** `docs/superpowers/specs/2026-07-30-contract-init-design.md` (branch
-`docs/contract-init-spec` @ `b81786f`, status *Draft — in review*), and on the `data-contract`
-visibility decision (§1.3).
+**Depends on:** `contract init`, now shipped in data-contract **v0.8.0** (`main` @ `25b213b`,
+annotated tag `v0.8.0`), and on the `data-contract` visibility decision (§1.3) — the one dependency
+still open.
 
-**Dependency status, verified 2026-07-30:**
+**Dependency status, reconciled 2026-07-31:**
 
 | Dependency | State |
 | --- | --- |
-| `contract init` implementation | **Not started.** No `src/contract_core/scaffold/`; `cli.py` still registers only `lint`/`reconcile`/`events`. Its implementation plan exists but is *untracked* on disk. |
-| `contract init` design | Revised twice since this plan was drafted (`82f8399` → `6fc0c72` → `b81786f`); still *Draft — in review*. Every section number cited below survives. |
-| P1 — gate stops requiring a read token | **Implemented**, four commits on `origin/fix/contract-gate-retire-token` @ `d023092`. Not merged to `dev`. |
-| Visibility decision | Still open. |
+| `contract init` implementation | **Shipped in v0.8.0.** `src/contract_core/scaffold/` exists (7 modules + `.tmpl` templates); `cli.py:213` registers `init` alongside `lint`/`reconcile`/`events`. |
+| `contract init` behaviour | Implemented as specified. `--platform` is validated char-by-char against `[A-Za-z0-9_-]` (`scaffold/plan.py:23,87,309`); the dependency pin lands in `next_steps` — **printed, not written** (`plan.py:330`); the drift test ships red (`REPLACE_ME_` + `pytest.fail` templates). Every behaviour §5's prose quotes holds against the shipped code. |
+| P1 — gate stops requiring a read token | **Merged and released** — PR #61 (`79657cd`), in v0.8.0. `contract-core-token` is `required: false`, the checkout steps read `data-contract` unauthenticated, and a supplied token is validated with `git ls-remote`. |
+| Visibility decision | **Still open.** `data-contract` is currently **PUBLIC** (`gh repo view` → `PUBLIC`). |
 
 **The design in one sentence:** `repo-template` ships **documentation and one inert beacon, and
 scaffolds nothing**. `contract init` owns the entire scaffold, run by the adopter in the finished
@@ -23,10 +24,11 @@ repo once the package has its real name.
 
 ## 1. Dependencies
 
-### 1.1 `contract init` — specified, not yet built
+### 1.1 `contract init` — shipped in v0.8.0
 
-An earlier revision of this document blocked on `contract init` being unspecified. That is no longer
-true: the design exists and answers every question this plan needed.
+An earlier revision of this document blocked on `contract init` being unspecified, then on its being
+unbuilt. Both are now closed: the command shipped in **v0.8.0** and answers every question this plan
+needed.
 
 | Question | Answer |
 | --- | --- |
@@ -37,17 +39,17 @@ true: the design exists and answers every question this plan needed.
 | `pyproject.toml` edits | init §8 — the `raw_drift` marker, behind a guard ladder. init §4.7 — the `contract-core` **dependency pin is printed, not written**. |
 | CI workflow and tag | init §4.5 — emitted with `@v{contract_core.__version__}` substituted for the placeholder. |
 
-**What remains open is "shipped," not "specified."** Verified on `2026-07-30`, and stated with the
-evidence because it is the gate on everything below:
+**Now shipped, not merely specified.** Reconciled on `2026-07-31`, stated with the evidence because
+it was the gate on everything below:
 
-- `src/contract_core/scaffold/` does not exist on any ref, on any branch, or in any working tree.
-- `src/contract_core/cli.py` still registers exactly `lint` (`:52`), `reconcile` (`:104`) and
-  `events` (`:129`). There is no `init`.
-- `docs/superpowers/plans/2026-07-30-contract-init.md` exists but is **untracked** — the
-  implementation plan is written, not committed, and not executed. Its own Global Constraints make
-  it P1-dependent.
+- `src/contract_core/scaffold/` exists on `main` (tag `v0.8.0` @ `25b213b`): `detect.py`, `plan.py`,
+  `apply.py`, `render.py`, `pyproject.py`, and the `.tmpl` templates.
+- `src/contract_core/cli.py:213` registers `init` alongside `lint`, `reconcile` and `events`, with
+  exactly the flags §5's prose quotes: `--system`, `--platform`, `--source {api,mcp,llm,file}`.
+- The implementation plan `docs/superpowers/plans/2026-07-30-contract-init.md` has been executed and
+  its output released.
 
-So this plan stays executable-when-unblocked, and its §6 suite cannot run until the command exists.
+So this plan is now executable, and its §6 suite can run — the command exists.
 
 **Revisions since this plan was drafted.** The design moved `82f8399` → `b81786f` across two
 commits ("fix wrong citations, the missing contract version, template linting"; "validate
@@ -67,12 +69,12 @@ The rest of the revision is internal to `contract-core` and does not reach this 
 when it declines), §7 (refuses when both package layouts exist), §9.1 (templates carry `.tmpl` so
 `ruff`/`mypy` never sweep them).
 
-### 1.2 P1 — implemented, awaiting merge
+### 1.2 P1 — merged and released
 
-init §12 sequenced this ahead of `contract init`, and it is the one dependency that is **built**:
-four commits on `origin/fix/contract-gate-retire-token` @ `d023092`, touching
-`.github/workflows/contract-gate.yml`, `CHANGELOG.md`, `docs/consuming-repo-setup.md` and
-`skills/authoring-data-contracts/references/templates/ci-gate.yml`. Not yet merged to `dev`.
+init §12 sequenced this ahead of `contract init`, and it is now **merged and released** — PR #61
+(`79657cd`), landed in v0.8.0, touching `.github/workflows/contract-gate.yml`, `CHANGELOG.md`,
+`docs/consuming-repo-setup.md` and
+`skills/authoring-data-contracts/references/templates/ci-gate.yml`.
 
 As built, matching the spec and going one step past it:
 
@@ -86,18 +88,17 @@ As built, matching the spec and going one step past it:
 - The skill's `ci-gate.yml` teaching template drops its `secrets:` block and its "three things must
   line up" third item.
 
-This plan's §5 prose already teaches a tokenless install, so it is consistent with P1 as built. It
-must not land before P1 merges, or it would document a gate whose `dev` version still hard-fails on
-an empty token.
+This plan's §5 prose already teaches a tokenless install, consistent with P1 as built and released.
+The precondition that P1 land first is now met.
 
 ### 1.3 The visibility decision — now coupled across two specs
 
 `Avenue-Z/data-contract` is currently **public** (`gh repo view` → `"visibility": "PUBLIC"`). Per the
 brief, that state is under review.
 
-This is no longer an independent question on the template's side, and P1 having shipped sharpens it
-rather than settling it. P1 *bets on public*, and init §10 adds a test asserting the generated
-workflow contains **no `secrets:` block**.
+This is no longer an independent question on the template's side, and P1 having merged and released
+sharpens it rather than settling it. P1 *bets on public*, and init §10 adds a test asserting the
+generated workflow contains **no `secrets:` block**.
 
 The sharp edge is step 2. `contract-gate.yml` now checks out `Avenue-Z/data-contract` with the
 default `GITHUB_TOKEN`, which cannot read another private repo. So under a flip to private the gate
@@ -111,9 +112,9 @@ paragraph of documentation, not to a generated file. That is a direct benefit of
 (§3). But the paragraph is wrong until the decision lands, so **do not write §5.2's prose until it
 does.**
 
-Separately and independently fixable: `docs/consuming-repo-setup.md` §1 and §7 assert
-"`data-contract` is private" as present-tense fact. That is already wrong today. P1 removes those
-lines anyway; if P1 slips, they should be corrected on their own.
+Now resolved by P1: `docs/consuming-repo-setup.md` previously asserted "`data-contract` is private"
+as present-tense fact. As released in v0.8.0 it reads "data-contract is public" throughout (§2 and
+the optional-token notes). No standalone fix is outstanding.
 
 ---
 
@@ -492,10 +493,10 @@ is unverified prose.
 
 ## 9. Execution order
 
-1. **Wait on**, in this order: P1 merging to `dev` (§1.2 — built, unmerged); the visibility decision
-   (§1.3); `contract init` leaving review **and being implemented and released** (§1.1 — the docs
-   this plan writes name a tag, and §7.2's verification runs the command). None of the three is
-   satisfied today.
+1. **Wait on** the visibility decision (§1.3) — the one remaining precondition. P1 has merged and
+   released (§1.2), and `contract init` is implemented and released as v0.8.0 (§1.1); both of those
+   blockers are cleared. The visibility decision is not settled, and §5.2's prose is gated on it
+   (§1.3).
 2. `docs/*` branch off `dev` in `Avenue-Z/repo-template`. Add the beacon; edit `README.repo.tmpl`,
    `CLAUDE.md`, `docs/ADOPTION.md`; add `template-tests/test_contracts_docs.sh`.
 3. Run the full suite locally — `for t in template-tests/test_*.sh; do bash "$t"; done` — and read the
@@ -508,19 +509,19 @@ is unverified prose.
 
 ## Appendix — evidence index
 
-Claims below were verified directly on `2026-07-30`. `repo-template` citations are against
-`6df4f21`; `data-contract` citations against `dev` (`53c77a4`) except the init spec
-(`docs/contract-init-spec` @ `b81786f`) and P1 (`origin/fix/contract-gate-retire-token` @ `d023092`).
+Claims below were verified on `2026-07-30` and reconciled on `2026-07-31`. `repo-template` citations
+are against `6df4f21` (current `dev`); `data-contract` citations against **v0.8.0** (`25b213b`),
+which now carries both `contract init` and P1.
 
 | Claim | Source |
 | --- | --- |
-| CLI has `lint`/`reconcile`/`events`, no `init` | `src/contract_core/cli.py:43-169` |
-| No `scaffold` package exists on any ref or worktree | `git ls-tree -r` over every ref; `ls src/contract_core/` |
-| The init implementation plan is untracked | `git status --short` → `?? docs/superpowers/plans/2026-07-30-contract-init.md` |
-| Init spec revised twice, still Draft | `git log docs/contract-init-spec` → `82f8399`, `6fc0c72`, `b81786f`; line 4 |
-| `--platform` must be `[A-Za-z0-9_-]+` | init spec §2.1.1 |
+| CLI registers `init` alongside `lint`/`reconcile`/`events` | `src/contract_core/cli.py:213` (v0.8.0) |
+| `scaffold` package exists (7 modules + templates) | `git ls-tree -r v0.8.0 -- src/contract_core/scaffold/` |
+| The init implementation plan is executed and released | v0.8.0 ships `scaffold/`; plan `docs/superpowers/plans/2026-07-30-contract-init.md` |
+| init spec implemented as v0.8.0 | `cli.py:213`, `scaffold/` on `main` @ `25b213b`; behaviours below verified against code |
+| `--platform` validated `[A-Za-z0-9_-]` char-by-char | `src/contract_core/scaffold/plan.py:23,87,309` |
 | Resolver splits the whole dotted ref | `src/contract_core/resolver.py:51-52`, quoted in init §2.1.1 |
-| P1 is implemented, unmerged | `origin/fix/contract-gate-retire-token` @ `d023092`; `git diff origin/dev...` = 4 files |
+| P1 merged and released | PR #61 (`79657cd`), in v0.8.0; `git diff` = 4 files |
 | P1 makes the secret optional and validates a supplied one | `.github/workflows/contract-gate.yml` on that branch, steps 2 and 4 |
 | Step 2 checks out `data-contract` unauthenticated | same file — `token:` removed from the `actions/checkout` |
 | `reconcile` needs an importable package | `src/contract_core/cli.py:101` |
@@ -528,13 +529,13 @@ Claims below were verified directly on `2026-07-30`. `repo-template` citations a
 | init entry state / success criterion | init spec §1.1 |
 | init is retrofit, gap-fill, no `--force` | init spec §5 |
 | init emits the workflow with `@v{__version__}` | init spec §4.5 |
-| init prints, not writes, the dependency pin | init spec §4.7 |
-| init's drift job is red by design | init spec §4.6, §6.2 |
+| init prints, not writes, the dependency pin | `scaffold/plan.py:330` (pin in `next_steps`) |
+| init's drift job is red by design | `scaffold/templates/drift_test.py.tmpl` (`REPLACE_ME_` + `pytest.fail`) |
 | init §10 is the lint/reconcile proof | init spec §1.1, §10, §10.1 |
 | P1 retires the token, bets on public | init spec §12 |
-| init spec status is *Draft — in review* | init spec line 4 (commit and working tree) |
+| init shipped in v0.8.0 (spec now implemented) | `cli.py:213`, `scaffold/` on `main` @ `25b213b` |
 | `data-contract` is public | `gh repo view Avenue-Z/data-contract --json visibility` → `PUBLIC` |
-| Docs still assert it is private | `docs/consuming-repo-setup.md` §1, §7 |
+| Docs now say `data-contract` is public (P1 fixed the stale lines) | `docs/consuming-repo-setup.md` §2 and token notes (v0.8.0) |
 | python stack is `>=3.11`, name `app` | `templates/python/pyproject.toml:6,9` |
 | python CI matrix is 3.11–3.13 | `templates/python/.github/workflows/ci.yml:19-34` |
 | Install step that breaks on the pin | `templates/python/.github/workflows/ci.yml:31` |
