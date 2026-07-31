@@ -3,7 +3,7 @@
 # references/boundary-decision.md). A hollow marked test satisfies `reconcile` but not the intent.
 import pytest
 
-from {{PACKAGE}}.boundaries import normalize   # the adapter under test
+from {{PACKAGE}}.boundaries import normalize   # the adapter under test — rename if yours isn't `normalize`
 
 
 @pytest.mark.raw_drift("{{RAW_NAME}}")          # MUST equal the raw boundary name in contract.yaml

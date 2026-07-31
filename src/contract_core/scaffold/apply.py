@@ -16,15 +16,19 @@ def apply(result: Plan, root: Path) -> None:
         [*result.other_targets] if result.is_rerun
         else [result.contract_target, *result.other_targets]
     )
-    # Compute the pyproject edit BEFORE writing any file. `apply_marker` is the only step that
-    # can raise; doing it first keeps the run all-or-nothing (design §2.2) — a failure here
-    # leaves the repo untouched instead of half-scaffolded.
+    # Compute the pyproject edit before writing any file. `apply_marker` transforms
+    # `result.pyproject_text` — the same snapshot plan()'s `guard_marker` classified the action
+    # from — so the write is a pure function of the plan, with no second read that could disagree
+    # with the classification. It is also the one step that can raise on bad input; ordering it
+    # first means such a raise leaves the tree untouched. The multi-file writes below are NOT
+    # transactional: an OS error mid-loop (disk full, denied permission) can leave a partial tree
+    # with the marker unwritten. That is recoverable, which is the real guarantee — init never
+    # overwrites, so a re-run gap-fills whatever is missing (design §2.2, §5.1).
     writes_marker = result.marker_action in (MarkerAction.INSERT_KEY, MarkerAction.APPEND_SECTION)
     pyproject_edit: tuple[Path, str] | None = None
     if writes_marker:
-        pyproject_path = root / "pyproject.toml"
-        edited = apply_marker(pyproject_path.read_text(), result.marker_action)
-        pyproject_edit = (pyproject_path, edited)
+        edited = apply_marker(result.pyproject_text, result.marker_action)
+        pyproject_edit = (root / "pyproject.toml", edited)
 
     for t in targets:
         _write_target(root, t)

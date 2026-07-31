@@ -174,6 +174,30 @@ def test_no_secret_emitted(tmp_path):
     assert "secrets:" not in workflow
 
 
+def test_pinned_gate_at_this_version_requires_no_secret():
+    """The other half of test_no_secret_emitted's guarantee — the caller side is only safe if the
+    gate it targets is safe. The generated workflow pins contract-gate.yml@v{__version__} and
+    passes NO `secrets:` block, so the gate at that tag must not declare any `required: true`
+    secret, or every scaffolded repo's gate call fails regardless of a clean local lint/reconcile.
+    The vX.Y.Z tag is cut from THIS tree, so the in-repo gate is what that tag resolves to: assert
+    here that it requires no secret. This fails in-repo if a required secret is reintroduced, or if
+    a release is mis-sequenced onto a commit that still requires the retired contract-core-token —
+    instead of failing silently in an adopter's CI (design 2026-07-30 §4.5; #61 token retirement).
+    """
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    gate = yaml.safe_load((repo_root / ".github/workflows/contract-gate.yml").read_text())
+    # PyYAML resolves the bare mapping key `on` to the boolean True (YAML 1.1); fall back to "on".
+    on = gate.get(True, gate.get("on")) or {}
+    secrets = (on.get("workflow_call") or {}).get("secrets") or {}
+    required = [name for name, spec in secrets.items() if (spec or {}).get("required") is True]
+    assert not required, (
+        f"contract-gate.yml requires secret(s) {required} that `contract init` emits no "
+        f"secrets: block for — a repo scaffolded at this tag would fail its gate on every PR"
+    )
+
+
 def test_drift_stub_is_red_not_a_collection_error(tmp_path):
     root = _scaffold_repo(tmp_path)
     _run("contract", "init", "--root", str(root), "--system", "sys", "--platform", "plat",

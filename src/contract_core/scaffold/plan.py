@@ -72,6 +72,7 @@ class Plan:
     contract_target: Target
     other_targets: list[Target]     # everything except contract.yaml, in write order
     marker_action: MarkerAction
+    pyproject_text: str             # the snapshot guard_marker classified; apply transforms THIS
     dependency_line: str
     next_steps: list[str]
 
@@ -334,7 +335,8 @@ def plan(spec: InitSpec, existing_paths: set[Path]) -> Plan:
     return Plan(
         is_rerun=is_rerun, system=system, archetype=archetype,
         contract_target=contract_target, other_targets=other_targets,
-        marker_action=marker_action, dependency_line=dependency_line, next_steps=next_steps,
+        marker_action=marker_action, pyproject_text=spec.pyproject_text,
+        dependency_line=dependency_line, next_steps=next_steps,
     )
 
 

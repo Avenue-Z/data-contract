@@ -11,12 +11,14 @@ def _plan(
     contract_content="system: x\n",
     extra_targets=(),
     marker_action=MarkerAction.SATISFIED,
+    pyproject_text="",
 ):
     return Plan(
         is_rerun=False, system="x", archetype="file-ingest",
         contract_target=Target(Path("contract.yaml"), contract_content, exists=False),
         other_targets=list(extra_targets),
-        marker_action=marker_action, dependency_line="contract-core @ git+...", next_steps=[],
+        marker_action=marker_action, pyproject_text=pyproject_text,
+        dependency_line="contract-core @ git+...", next_steps=[],
     )
 
 
@@ -38,10 +40,8 @@ def test_apply_does_not_touch_a_target_marked_as_existing(tmp_path):
 
 
 def test_apply_inserts_the_marker_key_when_the_section_exists(tmp_path):
-    (tmp_path / "pyproject.toml").write_text(
-        "[tool.pytest.ini_options]\npythonpath = [\"src\"]\n"
-    )
-    plan = _plan(tmp_path, marker_action=MarkerAction.INSERT_KEY)
+    pyproject = "[tool.pytest.ini_options]\npythonpath = [\"src\"]\n"
+    plan = _plan(tmp_path, marker_action=MarkerAction.INSERT_KEY, pyproject_text=pyproject)
     apply(plan, tmp_path)
     text = (tmp_path / "pyproject.toml").read_text()
     assert "raw_drift" in text
@@ -63,14 +63,16 @@ def test_apply_does_not_touch_pyproject_toml_when_manual(tmp_path):
 
 
 def test_apply_writes_nothing_when_the_marker_edit_cannot_be_applied(tmp_path):
-    """All-or-nothing: if `apply_marker` raises (INSERT_KEY with no locatable header LINE),
-    the marker edit is computed BEFORE any file is written, so the tree stays untouched."""
+    """A raise from `apply_marker` leaves the tree untouched: the marker edit is computed from the
+    plan's pyproject snapshot BEFORE any file is written, so nothing partial lands. (The multi-file
+    loop itself is not transactional — see apply()'s comment — but the pre-write raise is.)"""
     import pytest
 
     # A pyproject with no `[tool.pytest.ini_options]` header line — apply_marker(INSERT_KEY) raises.
-    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    pyproject = "[tool.ruff]\nline-length = 100\n"
     extra = Target(Path("schemas/p/n/1.0.0.yaml"), "schema: p.n\n", exists=False)
-    plan = _plan(tmp_path, extra_targets=[extra], marker_action=MarkerAction.INSERT_KEY)
+    plan = _plan(tmp_path, extra_targets=[extra], marker_action=MarkerAction.INSERT_KEY,
+                 pyproject_text=pyproject)
     with pytest.raises(ValueError):
         apply(plan, tmp_path)
     assert not (tmp_path / "contract.yaml").exists()
