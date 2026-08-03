@@ -24,7 +24,7 @@ jobs:
       # guard-base-branch.yml itself can still neuter the check. That is why .github/ should be
       # code-owned. Stated plainly in SECURITY.md and the spec's enforcement table.
       - name: Checkout the base branch (the guard must not be supplied by the PR it guards)
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.base_ref }}
           persist-credentials: false

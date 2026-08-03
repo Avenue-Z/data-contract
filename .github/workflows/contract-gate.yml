@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # 1. The CALLER's repo — the contract + package the gate runs against.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # 2. This repo's scripts. A workflow_call workflow checks out the CALLER, so
       #    scripts/expand-flags.sh is not otherwise on the runner. Check out data-contract at THIS
@@ -71,7 +71,7 @@ jobs:
           # JOB_WORKFLOW_REF looks like:
           #   owner/repo/.github/workflows/contract-gate.yml@refs/tags/v0.5.0
           echo "ref=${JOB_WORKFLOW_REF##*@}" >> "${GITHUB_OUTPUT}"
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Avenue-Z/data-contract
           ref: ${{ steps.ref.outputs.ref }}
