@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contract-core"
-version = "0.8.0"
+version = "0.8.1"
 description = "Data contract core library — schemas, contracts, compilers, runtime validation."
 requires-python = ">=3.13"
 dependencies = [
@@ -56,7 +56,10 @@ target-version = "py313"
 # The authoring-skill templates under skills/ are illustrative teaching snippets — they carry
 # intentional placeholder imports (`from my_pkg.boundaries import ...`) and `...` bodies, so they
 # cannot and should not satisfy the first-party lint. They are not importable source.
-extend-exclude = ["skills/"]
+# .github/fixtures/gate-consumer/ is the same case: a committed `contract init` output that
+# gate-selftest.yml runs the reusable gate against. It is a foreign consumer project (placeholder
+# adapter + on-purpose-red drift test), linted by the consumer's own ruff, not data-contract's.
+extend-exclude = ["skills/", ".github/fixtures/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

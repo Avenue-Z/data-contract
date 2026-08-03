@@ -89,6 +89,21 @@ def test_platform_with_a_hyphen_is_accepted():
     assert "schema: foo-bar.records@1" in result.contract_target.content
 
 
+def test_hyphenated_platform_sanitizes_the_drift_test_filename_but_not_the_marker():
+    """A pytest module filename must be a valid Python identifier stem; a hyphenated platform
+    (`--platform foo-bar`) would otherwise yield `tests/test_drift_foo-bar_raw.py`, whose stem is
+    not importable. Sanitize `-`→`_` in the filename only. The `raw_drift` marker arg must still
+    equal the raw boundary name in contract.yaml (hyphen intact), because reconcile matches on the
+    marker, not the filename."""
+    result = plan(_fresh_spec(platform="foo-bar"), existing_paths=set())
+    paths = {t.path for t in result.other_targets}
+    assert Path("tests/test_drift_foo_bar_raw.py") in paths
+    assert Path("tests/test_drift_foo-bar_raw.py") not in paths
+    drift = next(t for t in result.other_targets
+                 if str(t.path).startswith("tests/test_drift_"))
+    assert '@pytest.mark.raw_drift("foo-bar_raw")' in drift.content
+
+
 def test_empty_platform_is_rejected_before_anything_is_planned():
     with pytest.raises(PlanError):
         plan(_fresh_spec(platform=""), existing_paths=set())

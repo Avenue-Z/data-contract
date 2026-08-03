@@ -239,7 +239,12 @@ def _plan_boundaries_py(
 
 def _plan_drift_test(spec: InitSpec, raw: ResolvedBoundary, existing_paths: set[Path]) -> Target:
     content = render("drift_test.py.tmpl", {"PACKAGE": spec.package, "RAW_NAME": raw.name})
-    path = Path("tests") / f"test_drift_{raw.name}.py"
+    # The marker arg (RAW_NAME) keeps the raw boundary name verbatim — reconcile matches on it, and
+    # it must equal contract.yaml. The filename cannot: a hyphenated platform yields a stem like
+    # `test_drift_foo-bar_raw`, which is not a valid Python module identifier. Sanitize `-`→`_` in
+    # the filename only ('-' is the sole non-identifier char _validate_identifier admits).
+    stem = raw.name.replace("-", "_")
+    path = Path("tests") / f"test_drift_{stem}.py"
     return Target(path, content, exists=path in existing_paths)
 
 

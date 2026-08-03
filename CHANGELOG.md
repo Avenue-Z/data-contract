@@ -11,6 +11,22 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-08-03
+
+### Fixed
+
+- **The reusable CI gate now resolves its own ref correctly.** `contract-gate.yml` (a
+  `workflow_call` reusable workflow) checks out `data-contract` at its own ref to run the tested
+  `expand-flags.sh`, but resolved that ref from `$GITHUB_WORKFLOW_REF` — which in a reusable workflow
+  is the *caller's* top-level workflow ref, not the gate's. A consuming repo would have fetched the
+  gate's scripts at the consumer's own ref (the wrong version when a name like `main` coincidentally
+  exists here, or a failed checkout otherwise) instead of the tag it pinned. Now uses
+  `job.workflow_ref`, the documented context for the file that defines the current job.
+- **`contract init` sanitizes the drift-test filename for a hyphenated platform.** `--platform my-crm`
+  produced `tests/test_drift_my-crm_raw.py`, whose stem is not a valid Python module identifier. The
+  filename stem now sanitizes `-`→`_` (`test_drift_my_crm_raw.py`); the `raw_drift` marker argument,
+  which `reconcile` matches on, is unchanged and still equals the raw boundary name in `contract.yaml`.
+
 ## [0.8.0] — 2026-07-31
 
 ### Added
