@@ -1,0 +1,17 @@
+# Minimal consumer project used only by gate-selftest.yml to exercise the reusable contract-gate
+# against a real `contract init` output. contract-core is NOT pinned here: the self-test installs
+# it from this same checkout (the code under test), so `pip install --no-deps` this package.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gate-consumer"
+version = "0.0.0"
+requires-python = ">=3.13"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+markers = ["raw_drift: a drift test guarding a raw boundary (read by `contract reconcile`)"]
