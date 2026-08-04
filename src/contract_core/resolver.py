@@ -83,8 +83,11 @@ class Resolver:
         if not searched:
             where = ", ".join(str(p) for p in self.search_paths) or "<no search paths>"
             return f"{ref} — no directory for schema {name!r} under: {where}"
-        available = sorted({p.stem for d in searched for p in d.glob("*.yaml")
-                            if parse_semver(p.stem) is not None})
+        # Sort by the parsed (major, minor, patch), not the stem: a plain string sort puts
+        # 10.0.0 before 2.0.0, misleading on a message whose job is to help pick a version (#55).
+        parsed = {p.stem: v for d in searched for p in d.glob("*.yaml")
+                  if (v := parse_semver(p.stem)) is not None}
+        available = sorted(parsed, key=lambda s: parsed[s])
         have = f"available: {', '.join(available)}" if available else "no versioned files there"
         if _is_partial_pin(version):
             return (f"{ref} — no file {version}.yaml; pin forms are {_PIN_FORMS}. "
