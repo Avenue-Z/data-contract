@@ -7,17 +7,12 @@ name: gate-selftest
 # init` output), turning "coherent on read" into "ran green in Actions" for the no-token happy path:
 # ref resolution → checkout of this repo's expander → install → lint → reconcile.
 #
-# ┌─ PARKED (manual trigger only) ──────────────────────────────────────────────────────────────┐
-# │ Wiring this self-test up immediately surfaced a real, pre-existing bug: the gate's default    │
-# │ `pip install .` puts the consumer package in site-packages, where the generated               │
-# │ boundaries.py cannot find contract.yaml by walking up from __file__ → reconcile fails with a  │
-# │ FileNotFoundError import for EVERY real src-layout consumer. See finding 3 in the review note  │
-# │ (2026-07-31-review-v0.8.0-repo-template-integration.md). Until that lands, this workflow would │
-# │ be red on every run, so it is `workflow_dispatch` only. RE-ENABLE the pull_request/push        │
-# │ triggers below in the PR that fixes finding 3 — the self-test is that fix's verification.      │
-# └──────────────────────────────────────────────────────────────────────────────────────────────┘
+# It was parked at workflow_dispatch when first added: it immediately caught finding 3 (a real,
+# pre-existing bug — the gate's `pip install .` put the consumer in site-packages, where the
+# generated boundaries.py could not find contract.yaml). That is now fixed (reconcile exports
+# CONTRACT_YAML for the import), so the self-test is live again and is that fix's proof.
 #
-# NOT covered here even once un-parked, by construction:
+# NOT covered here, by construction:
 #   - The supplied-but-wrong-token `git ls-remote` fast-fail. Asserting the gate FAILS would need
 #     `continue-on-error` on the calling job, which GitHub forbids on a `uses:` (reusable-workflow)
 #     job; replicating the token shell inline would be the drift-prone copy the gate avoids. Left to
@@ -27,15 +22,14 @@ name: gate-selftest
 #     cross-repo ref logic. That, too, is confirmable only from a consumer repo.
 
 on:
-  workflow_dispatch:   # PARKED — see the finding-3 note above; restore the triggers below with the fix:
-  # pull_request:
-  #   paths:
-  #     - .github/workflows/contract-gate.yml
-  #     - .github/workflows/gate-selftest.yml
-  #     - .github/fixtures/gate-consumer/**
-  #     - scripts/expand-flags.sh
-  # push:
-  #   branches: [dev, staging, main]
+  pull_request:
+    paths:
+      - .github/workflows/contract-gate.yml
+      - .github/workflows/gate-selftest.yml
+      - .github/fixtures/gate-consumer/**
+      - scripts/expand-flags.sh
+  push:
+    branches: [dev, staging, main]
 
 permissions:
   contents: read
