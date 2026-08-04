@@ -259,10 +259,11 @@ class ContractRuntime:
         for field, check, value in cases:
             groups.setdefault((field, check), []).append(value)
 
-        # Structural diffs collapse per field ("column missing" twice is noise); value
-        # diffs do not collapse across constraints, because `minimum` and `maximum` on one
-        # field are two distinct facts (design §5.2.1).
-        structural: dict[str, FieldDiff] = {}
+        # Structural diffs collapse per (field, problem): the same problem on a field twice is
+        # noise, but a field that is BOTH retyped and null-bearing is two distinct facts and must
+        # report both (#22) — collapsing by field alone dropped one. This mirrors value diffs,
+        # which already keep one fact per (field, check) (design §5.2.1).
+        structural: dict[tuple[str, str], FieldDiff] = {}
         diffs: list[FieldDiff] = []
         for (field, check), values in groups.items():
             declared = next((f for f in resolved.fields if f.name == field), None)
@@ -276,16 +277,17 @@ class ContractRuntime:
                     samples=[str(v) for v in values[:3]],
                 ))
             elif check == "column_in_dataframe":
-                structural[field] = FieldDiff(field=field, expected=expected,
-                                              observed="absent", problem="missing")
+                structural[(field, "missing")] = FieldDiff(field=field, expected=expected,
+                                                           observed="absent", problem="missing")
             elif check == "not_nullable":
                 # a null-tolerance violation, not a type change: don't mislabel it
                 # `retyped` with a (valid) dtype as observed.
-                structural[field] = FieldDiff(field=field, expected=expected,
-                                              observed="null", problem="nullable")
+                structural[(field, "nullable")] = FieldDiff(field=field, expected=expected,
+                                                            observed="null", problem="nullable")
             else:
-                structural[field] = FieldDiff(field=field, expected=expected,
-                                              observed=observed_dtype, problem="retyped")
+                structural[(field, "retyped")] = FieldDiff(
+                    field=field, expected=expected,
+                    observed=observed_dtype, problem="retyped")
         diffs = [*structural.values(), *diffs]
         if is_output:
             declared_names = {f.name for f in resolved.fields}

@@ -127,6 +127,31 @@ def test_enforce_null_in_non_nullable_column_labeled_nullable_not_retyped(tmp_pa
     assert log.records()[-1]["result"] == "violation"
 
 
+def test_enforce_column_both_retyped_and_null_bearing_reports_both(tmp_path):
+    # #22: a column that is BOTH wrongly typed and null-bearing under nullable: false must
+    # surface two structural diffs (retyped AND nullable). Keying structural diffs by field
+    # alone collapses to one — the operator fixes the dtype, re-runs, and only then learns of
+    # the null problem. Value diffs already keep distinct facts per (field, check); match that.
+    rt, _ = _runtime(tmp_path)
+
+    @rt.input("prompts")
+    def load():
+        # `prompt` is the only non-nullable field; send it as Int64 (wrong family, expected str)
+        # carrying a null, so both the dtype-family check and the not-null check fire on it.
+        return pd.DataFrame({
+            "prompt": pd.array([1, None], dtype="Int64"),
+            "sentiment": [0.5, 0.6],
+            "position": pd.array([1, 2], dtype="Int64"),
+            "share_of_voice": [0.3, 0.4],
+        })
+
+    with pytest.raises(ContractViolation) as ei:
+        load()
+    msg = str(ei.value)
+    assert "retyped field 'prompt'" in msg
+    assert "nullable field 'prompt'" in msg
+
+
 def test_observe_never_raises_but_logs_violation(tmp_path):
     rt, log = _runtime(tmp_path, mode="observe")
 
