@@ -11,6 +11,25 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-08-04
+
+### Fixed
+
+- **The reusable CI gate's `reconcile` step now works for an installed consumer.** The gate installs
+  the consumer with `pip install .`, so the generated `boundaries.py` sat in site-packages, where it
+  could not find `contract.yaml` by walking up from `__file__` — `reconcile` failed to import it
+  (`FileNotFoundError`) for every real src-layout consumer, i.e. the gate did not pass a real
+  adoption. `reconcile` now passes the contract path to the force-import via a `CONTRACT_YAML`
+  environment variable, and the generated `boundaries.py` reads it (schemas taken as a sibling),
+  falling back to the `__file__` walk for a source/editable checkout. A new `gate-selftest` workflow
+  runs the reusable gate against a committed fixture consumer in CI so this path is exercised, not
+  just read.
+- **`SchemaNotFound` lists available versions in version order, not string order** (#55): once a
+  schema family reaches major 10, `10.0.0` no longer sorts before `2.0.0` in the diagnostic.
+- **A column that is both wrongly typed and null-bearing reports both facts** (#22): structural diffs
+  are now keyed by `(field, problem)`, so `retyped` and `nullable` on one column both surface instead
+  of the type change silently hiding the null.
+
 ## [0.8.1] — 2026-08-03
 
 ### Fixed
