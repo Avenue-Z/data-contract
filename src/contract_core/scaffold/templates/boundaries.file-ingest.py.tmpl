@@ -5,16 +5,27 @@
 # __init__.py (e.g. `from . import boundaries`) makes that import happen automatically.
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 try:
     from contract_core import load_runtime
 
-    _HERE = Path(__file__).resolve()
-    _ROOT = next((p for p in _HERE.parents if (p / "contract.yaml").exists()), None)
-    if _ROOT is None:
-        raise FileNotFoundError(f"contract.yaml not found in any parent of {_HERE}")
-    runtime = load_runtime(str(_ROOT / "contract.yaml"), schema_paths=[str(_ROOT / "schemas")])
+    # Locate contract.yaml. `contract reconcile` sets CONTRACT_YAML to the path it was given —
+    # authoritative, and works even when this package is installed (its __file__ is then in
+    # site-packages, with no contract.yaml above it, so the walk below cannot find it). Falling
+    # back to walking up from __file__ keeps a source-tree / editable checkout working when unset.
+    # schemas/ is taken as a sibling of contract.yaml, which is how `contract init` lays it out.
+    _env = os.environ.get("CONTRACT_YAML")
+    if _env:
+        _CONTRACT = Path(_env).resolve()
+    else:
+        _HERE = Path(__file__).resolve()
+        _ROOT = next((p for p in _HERE.parents if (p / "contract.yaml").exists()), None)
+        if _ROOT is None:
+            raise FileNotFoundError(f"contract.yaml not found via CONTRACT_YAML or above {_HERE}")
+        _CONTRACT = _ROOT / "contract.yaml"
+    runtime = load_runtime(str(_CONTRACT), schema_paths=[str(_CONTRACT.parent / "schemas")])
 except ImportError:
     class _NoOpRuntime:
         """Stand-in when contract-core is not installed. Must NOT import from it."""

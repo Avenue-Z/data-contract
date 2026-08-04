@@ -6,6 +6,7 @@ orchestrator. Internal module — nothing here is on the public surface (R9).
 """
 import ast
 import importlib
+import os
 import pkgutil
 import sys
 from collections.abc import Iterable, Sequence
@@ -260,7 +261,18 @@ def reconcile(
     n_boundaries = len(declared)
 
     _reset_registry()
-    import_findings = force_import_package(package)
+    # Tell the package where its contract is, so a generated boundaries.py can find it even when
+    # installed (its __file__ then sits in site-packages, above which there is no contract.yaml —
+    # the gate's `pip install .` hit exactly this). Set only across the import, then restore.
+    _prev = os.environ.get("CONTRACT_YAML")
+    os.environ["CONTRACT_YAML"] = str(Path(contract_path).resolve())
+    try:
+        import_findings = force_import_package(package)
+    finally:
+        if _prev is None:
+            os.environ.pop("CONTRACT_YAML", None)
+        else:
+            os.environ["CONTRACT_YAML"] = _prev
     if any(f.category == "P" for f in import_findings):
         return ReconcileResult(import_findings, contract.system, contract.version, n_boundaries)
 

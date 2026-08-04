@@ -85,3 +85,16 @@ def test_an_unparseable_major_is_a_diagnosis_not_a_valueerror(ref):
     assert ref in msg
     assert "@1" in msg and "@1.0.0" in msg  # both supported forms are named
     assert "available: 1.0.0" in msg        # and the versions that do exist
+
+
+def test_not_found_lists_available_versions_in_version_order_not_string_order(tmp_path):
+    # A schema family that has reached major 10: a plain string sort puts 10.0.0 before 2.0.0,
+    # which is misleading on a message whose whole job is to help someone pick a version (#55).
+    d = tmp_path / "schemas" / "s" / "tab"
+    d.mkdir(parents=True)
+    for stem in ("1.0.0", "2.0.0", "10.0.0"):
+        (d / f"{stem}.yaml").write_text("")
+    r = Resolver([tmp_path / "schemas"])
+    with pytest.raises(SchemaNotFound) as ei:
+        r.resolve("s.tab@9.9.9")
+    assert "available: 1.0.0, 2.0.0, 10.0.0" in str(ei.value)
