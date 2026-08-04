@@ -2,6 +2,7 @@
 mutates sys.modules, and the console script is the supported entry point — the same reasoning
 tests/test_distribution.py already uses.
 """
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +49,29 @@ def test_scaffolded_tree_lints_and_reconciles_clean(tmp_path, source_kind, arche
         "--tests", "tests", cwd=root, env={"PYTHONPATH": _pythonpath_for(root, root)},
     )
     assert reconcile.returncode == 0, reconcile.stdout + reconcile.stderr
+
+
+def test_reconcile_finds_contract_when_package_is_installed_away_from_it(tmp_path):
+    # Finding 3 (#68): the gate installs the consumer with `pip install .`, so boundaries.py's
+    # __file__ lands in site-packages with no contract.yaml above it — the __file__ walk fails and
+    # reconcile could not import the package for ANY real src-layout consumer. Simulate the install
+    # by importing the package from a copy OUTSIDE the repo. reconcile must still resolve the
+    # contract (it exports CONTRACT_YAML for the import), not fail with a category-P import error.
+    root = _scaffold_repo(tmp_path / "repo")
+    init = _run("contract", "init", "--root", str(root), "--system", "sys",
+                "--platform", "plat", "--source", "api", cwd=root)
+    assert init.returncode == 0, init.stdout + init.stderr
+
+    installed = tmp_path / "site"           # a location with NO contract.yaml in any parent
+    installed.mkdir()
+    shutil.copytree(root / "my_pkg", installed / "my_pkg")
+
+    reconcile = _run(
+        "contract", "reconcile", "--contract", "contract.yaml", "--package", "my_pkg",
+        "--tests", "tests", cwd=root, env={"PYTHONPATH": str(installed)},
+    )
+    assert reconcile.returncode == 0, reconcile.stdout + reconcile.stderr
+    assert "FileNotFoundError" not in (reconcile.stdout + reconcile.stderr)
 
 
 def test_rerun_is_a_fixed_point(tmp_path):
