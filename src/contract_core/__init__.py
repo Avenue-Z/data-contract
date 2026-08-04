@@ -12,7 +12,7 @@ CLI is invoked through the `contract` console script, not by importing `contract
 from contract_core.errors import ContractFormatError, ContractViolation, FieldDiff
 from contract_core.runtime import ContractRuntime, load_runtime
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 __all__ = [
     "ContractFormatError",
