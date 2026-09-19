@@ -67,7 +67,9 @@ read is refused with an upgrade hint, rather than mis-parsed.
 ### Value constraints
 
 A schema field may declare `enum`, `minimum`, `maximum`, or `min_length`. They are enforced at the
-boundary alongside presence and type, and a violation raises `ContractViolation` under `enforce`:
+boundary alongside presence and type, and a violation raises `ContractViolation` under `enforce`.
+A payload authored as a raw `json_schema` is checked against every rule it declares (`oneOf`,
+`pattern`, `const`, `minItems` and the rest), with the same `value` diff (#78):
 
 ```python
 except ContractViolation as exc:
