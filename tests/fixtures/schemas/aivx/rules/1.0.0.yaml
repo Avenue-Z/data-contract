@@ -1,0 +1,26 @@
+# tests/fixtures/schemas/aivx/rules/1.0.0.yaml
+# A raw `json_schema` payload using JSON Schema rules the payload check had no branch for
+# (#78): each one used to be dropped, so an enforce boundary passed a payload that broke it.
+# `meta` and `labels` are author-closed nested objects, for nested extras.
+schema: aivx.rules
+version: 1.0.0
+kind: payload
+json_schema:
+  type: object
+  properties:
+    count: {oneOf: [{type: integer, minimum: 0}, {type: string, pattern: "^\\[n/a\\]$"}]}
+    code: {type: string, pattern: "^[A-Z]{3}$"}
+    kind: {const: report}
+    tags: {type: array, minItems: 1, items: {type: string}}
+    note: {not: {type: "null"}}
+    meta:
+      type: object
+      properties:
+        src: {type: string}
+      additionalProperties: false
+    labels:
+      type: object
+      patternProperties:
+        "^x_": {type: string}
+      additionalProperties: false
+  required: [count, code, kind, tags]

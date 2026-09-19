@@ -106,6 +106,8 @@ set `additionalProperties`, the boundary's direction fills it in — open on `ra
 `outputs`, so an undeclared output key warns exactly as it does for a `fields` payload. Set
 `additionalProperties` yourself to override that. Its `properties` are translated into the ODCS
 export; anything else it declares (nested shapes, `oneOf`, value constraints) is not.
+At runtime every rule it declares is enforced: a value that breaks a `oneOf`, `pattern`, `const`,
+`minItems` or any other keyword is a `value` violation (#78; earlier versions dropped those silently).
 
 **Contract** `contract.yaml`. Top level is `system` + `version` (NOT `name`). Groups are `raw`,
 `inputs`, `outputs` (plural). **Every boundary — including `raw` — needs a `schema:` ref.** Refs are

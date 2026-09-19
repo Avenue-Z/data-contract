@@ -1,6 +1,7 @@
 # src/contract_core/runtime.py
 import functools
 import os
+import re
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -338,16 +339,43 @@ class ContractRuntime:
                     constraint=constraint,
                     violating_rows=None, samples=[str(err.instance)],
                 ))
-            elif err.validator == "additionalProperties" and is_output:
-                # closed output: name the extras
-                declared = set((resolved.json_schema or {}).get("properties", {})) \
-                    if resolved.json_schema else {f.name for f in (resolved.fields or [])}
-                for k in payload:
-                    if k not in declared:
-                        diffs.append(FieldDiff(field=str(k), expected="absent",
-                                               observed=type(payload[k]).__name__,
-                                               problem="extra"))
+            elif err.validator == "additionalProperties":
+                # Extras never fail a boundary: `_validate` warns on an output and passes an
+                # input. Named from the error itself, so an extra inside a nested object
+                # surfaces as `parent.key` too; the old scan compared only top-level keys, so a
+                # nested error found nothing and was dropped (#78).
+                parent = [str(p) for p in err.path]
+                for k in _extra_keys(err.instance, err.schema):
+                    diffs.append(FieldDiff(field=".".join([*parent, k]), expected="absent",
+                                           observed=type(err.instance[k]).__name__,
+                                           problem="extra"))
+            else:
+                # Fail closed (#78). A rule with no branch above is still a rule: `oneOf`,
+                # `pattern`, `const`, `minItems`, `not` and the rest used to fall through here
+                # and be dropped, so an enforce boundary passed a payload that broke its own
+                # schema. Temporal-only `format` checking is unaffected: the checker never
+                # raises for other formats, so `email` stays annotation-only.
+                field = str(err.path[-1]) if err.path else "?"
+                declared_field = next(
+                    (f for f in (resolved.fields or []) if f.name == field), None)
+                rule = err.validator_value
+                diffs.append(FieldDiff(
+                    field=field, expected=str(declared_field.type) if declared_field else "?",
+                    observed=type(err.instance).__name__, problem="value",
+                    constraint=(f"{err.validator}={rule}"
+                                if isinstance(rule, (str, int, float)) else str(err.validator)),
+                    violating_rows=None, samples=[str(err.instance)],
+                ))
         return diffs, observed
+
+
+def _extra_keys(instance: dict[str, Any], schema: dict[str, Any]) -> list[str]:
+    """The keys `additionalProperties` rejected: neither declared in `properties` nor matched by a
+    `patternProperties` pattern. Mirrors how jsonschema decides, without its private helper."""
+    declared = schema.get("properties", {})
+    patterns = schema.get("patternProperties", {})
+    return [str(k) for k in instance
+            if k not in declared and not any(re.search(p, str(k)) for p in patterns)]
 
 
 def _passthrough(fn: Callable[..., Any]) -> Callable[..., Any]:

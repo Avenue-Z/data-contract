@@ -412,3 +412,124 @@ def test_composition_payload_does_not_warn_on_a_valid_output(tmp_path):
 
     produce()
     assert log.records()[-1]["result"] == "pass"
+
+
+# ---- payload rules the check had no branch for fail closed (#78) ----
+#
+# `_validate_payload` mapped seven jsonschema keywords to diffs and dropped every other error,
+# so `oneOf`, `pattern`, `const`, `minItems`, `not` and the rest never failed a boundary, and a
+# nested object's extras never warned.
+
+
+def _rules_runtime(tmp_path, mode="enforce", group="outputs"):
+    contract = Contract.model_validate({
+        "system": "demo", "version": "1.0.0",
+        group: [{"name": "rules", "schema": "aivx.rules@1.0.0", "mode": mode}],
+    })
+    log = EventLog(tmp_path / "e.jsonl")
+    return ContractRuntime(contract, Resolver([FIX / "schemas"]), event_log=log,
+                           clock=lambda: "2026-07-16T00:00:00+00:00"), log
+
+
+_RULES_OK = {"count": 3, "code": "ABC", "kind": "report", "tags": ["x"]}
+
+
+@pytest.mark.parametrize("field,bad,constraint", [
+    ("count", "about 60", "oneOf"),
+    ("count", -3, "oneOf"),                      # `minimum` inside a branch reports as `oneOf`
+    ("code", "abc", "pattern=^[A-Z]{3}$"),
+    ("kind", "invoice", "const=report"),
+    ("tags", [], "minItems=1"),
+    ("note", None, "not"),
+])
+def test_payload_rule_without_a_branch_is_a_violation(tmp_path, field, bad, constraint):
+    rt, log = _rules_runtime(tmp_path)
+
+    @rt.output("rules")
+    def produce():
+        return {**_RULES_OK, field: bad}
+
+    with pytest.raises(ContractViolation) as ei:
+        produce()
+    diff = ei.value.diffs[0]
+    assert (diff.field, diff.problem, diff.constraint) == (field, "value", constraint)
+    assert diff.samples == [str(bad)]
+    assert log.records()[-1]["result"] == "violation"
+
+
+def test_payload_rule_violation_is_recorded_not_raised_under_observe(tmp_path):
+    rt, log = _rules_runtime(tmp_path, mode="observe")
+
+    @rt.output("rules")
+    def produce():
+        return {**_RULES_OK, "code": "abc"}
+
+    produce()
+    assert log.records()[-1]["result"] == "violation"
+
+
+def test_payload_satisfying_every_rule_passes(tmp_path):
+    rt, log = _rules_runtime(tmp_path)
+
+    @rt.output("rules")
+    def produce():
+        return {**_RULES_OK, "count": "[n/a]", "note": "hi", "meta": {"src": "a"},
+                "labels": {"x_one": "a"}}
+
+    produce()
+    assert log.records()[-1]["result"] == "pass"
+
+
+def test_nested_extra_on_an_output_warns_like_a_top_level_one(tmp_path):
+    rt, log = _rules_runtime(tmp_path)
+
+    @rt.output("rules")
+    def produce():
+        return {**_RULES_OK, "meta": {"src": "a", "debug": 1}}
+
+    produce()  # extras on an output warn, they never raise
+    assert log.records()[-1]["result"] == "warn"
+
+
+def test_nested_extra_on_an_output_is_named_with_its_path(tmp_path):
+    rt, _ = _rules_runtime(tmp_path)
+    diffs, _ = rt._validate_payload(rt.resolver.resolve("aivx.rules@1.0.0"),
+                                    {**_RULES_OK, "meta": {"src": "a", "debug": 1}}, True)
+    assert [(d.field, d.problem) for d in diffs] == [("meta.debug", "extra")]
+
+
+def test_extras_never_ride_on_a_violation(tmp_path):
+    rt, _ = _rules_runtime(tmp_path)
+
+    @rt.output("rules")
+    def produce():
+        return {**_RULES_OK, "code": "abc", "meta": {"src": "a", "debug": 1}}
+
+    with pytest.raises(ContractViolation) as ei:
+        produce()
+    assert [d.field for d in ei.value.diffs] == ["code"]
+
+
+def test_pattern_property_is_not_an_extra(tmp_path):
+    rt, log = _rules_runtime(tmp_path)
+
+    @rt.output("rules")
+    def produce():
+        return {**_RULES_OK, "labels": {"x_one": "a", "y_two": "b"}}
+
+    produce()
+    assert log.records()[-1]["result"] == "warn"   # y_two is extra; x_one matches ^x_
+    diffs, _ = rt._validate_payload(rt.resolver.resolve("aivx.rules@1.0.0"),
+                                    {**_RULES_OK, "labels": {"x_one": "a", "y_two": "b"}}, True)
+    assert [d.field for d in diffs] == ["labels.y_two"]
+
+
+def test_nested_extra_on_an_input_still_passes(tmp_path):
+    rt, log = _rules_runtime(tmp_path, group="inputs")
+
+    @rt.input("rules")
+    def load():
+        return {**_RULES_OK, "meta": {"src": "a", "vendor_surprise": 1}}
+
+    load()
+    assert log.records()[-1]["result"] == "pass"

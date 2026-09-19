@@ -11,6 +11,23 @@ changes to the public API or the authored format. Read the entry before moving a
 
 ## [Unreleased]
 
+### Fixed
+
+- **A payload boundary now enforces every rule its schema declares, not only seven of them** (#78).
+  `_validate_payload` turned only `required`, `type`, `enum`, `minimum`, `maximum`, `minLength` and
+  `format` errors into diffs and dropped the rest. So `oneOf`, `anyOf`, `allOf`, `const`, `pattern`,
+  `minItems`/`maxItems`, `maxLength`, `not`, `multipleOf` and the exclusive bounds never failed a
+  boundary, and an enforce boundary passed payloads that broke their own schema. Every unmapped
+  error is now a `value` diff whose `constraint` names the keyword (`pattern=^[A-Z]{3}$`,
+  `const=report`, `minItems=1`, or the bare keyword for a composition such as `oneOf`).
+  **A payload that broke one of those rules and passed before now fails under `enforce`.** If you
+  are unsure, run the boundary in `observe` and read `contract events` before moving the pin.
+  `format` checking is unchanged: `email` and `uri` stay annotation-only.
+- **An extra key inside a nested object on an output now warns**, named `parent.key`, the same as a
+  top-level extra (#78). The old scan compared only top-level keys, so a nested extra was dropped.
+  Extras still never fail a boundary and still pass on an input; keys matched by
+  `patternProperties` are not extras.
+
 ## [0.8.2] — 2026-08-04
 
 ### Fixed
